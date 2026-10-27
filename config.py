@@ -24,8 +24,8 @@ GEMINI_MODEL = "gemini-2.5-flash"
 ELEVENLABS_MODEL = os.environ.get("ELEVENLABS_MODEL", "eleven_multilingual_v2")
 
 # Flux Image Resolution (9:16 Vertical HD)
-IMAGE_WIDTH = 768
-IMAGE_HEIGHT = 1344
+IMAGE_WIDTH = 1088
+IMAGE_HEIGHT = 1920
 FLUX_STEPS = 4
 
 # Creatomate Render Output Resolution (9:16 Full HD Vertical)
