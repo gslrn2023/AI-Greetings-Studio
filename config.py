@@ -10,7 +10,7 @@ HF_TOKEN = os.environ.get("HF_TOKEN", "")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 ELEVENLABS_API_KEY = os.environ.get("ELEVENLABS_API_KEY", "")
 CREATOMATE_API_KEY = os.environ.get("CREATOMATE_API_KEY", "")
-APP_PASSCODE = os.environ.get("APP_PASSCODE", "admin123")  # Default fallback if not set
+APP_PASSCODE = os.environ.get("APP_PASSCODE", "admin123")
 
 # =====================================================================
 # 2. GLOBAL TUNING & QUOTA VARIABLES
@@ -23,16 +23,21 @@ GEMINI_MODEL = "gemini-2.5-flash"
 # "eleven_multilingual_v2" uses 1.0 credit/char (richer emotional nuance)
 ELEVENLABS_MODEL = os.environ.get("ELEVENLABS_MODEL", "eleven_multilingual_v2")
 
-# Flux Image Resolution (9:16 Vertical HD)
-IMAGE_WIDTH = 1088
-IMAGE_HEIGHT = 1920
-FLUX_STEPS = 4
+# Flux Image Resolution (Optimal 9:16 1.2MP sweet spot for FLUX.1-schnell sharpness)
+IMAGE_WIDTH = 832
+IMAGE_HEIGHT = 1472
+FLUX_STEPS = 6
 
 # Creatomate Render Output Resolution (9:16 Full HD Vertical)
 VIDEO_WIDTH = 1080
 VIDEO_HEIGHT = 1920
 DEFAULT_NO_TTS_DURATION = 7.0  # Seconds when voiceover is muted (solemn/bereavement)
 AUDIO_PADDING_SECONDS = 2.2    # Tail buffer after voiceover finishes
+
+# Audio Mixing Controls
+BGM_VOLUME_WITH_TTS = "8%"     # Subtle ambient bed when voiceover is speaking
+BGM_VOLUME_NO_TTS = "75%"      # Full emotional presence when voiceover is omitted
+TTS_VOLUME_BOOST = "150%"      # Amplifies ElevenLabs voiceover for crystal clarity
 
 # =====================================================================
 # 3. ELEVENLABS FREE-TIER VOICE PALETTE (100% Free-Tier API Compatible)
@@ -59,13 +64,13 @@ BGM_MAP = {
 # 5. ANTI-REPETITION CREATIVE STYLE LENSES
 # =====================================================================
 CREATIVE_STYLE_LENSES = [
-    "35mm Analog Editorial Photography (Kodak Portra 400 grain, natural golden-hour rim light, shallow depth of field, intimate candid framing)",
-    "Sculptural 3D Papercraft & Origami Art (layered textured artisan paper, warm miniature diorama spotlighting, delicate gold-foil accents, tactile shadows)",
-    "Luminous Gouache & Watercolor Illustration (hand-painted botanical and atmospheric textures, cold-press cotton paper grain, delicate metallic ink highlights)",
-    "Atmospheric Magical Realism (bioluminescent warm particles, dreamy twilight depth, floating lanterns or ethereal natural elements, cinematic wide lens)",
-    "Luxury Still-Life Studio Photography (minimalist architectural pedestals, dramatic chiaroscuro warm side-lighting, rich velvet and silk textures, crisp optical focus)",
-    "Vibrant Contemporary Stained-Glass & Light Art (refraction of colored morning sunbeams, intricate geometric framing, glowing atmospheric dust motes)",
-    "Fine-Art Oil Impasto Painting (expressive palette knife brushwork, warm candlelit radiance, classical museum-grade color harmony, rich atmospheric depth)"
+    "35mm Analog Editorial Photography (Kodak Portra 400 film, golden-hour rim light, shallow depth of field, rich environmental storytelling, natural lens flare)",
+    "Cinematic National Geographic Expedition Photography (wide-angle dramatic landscape vista, warm campfire or lantern glow contrasting with deep twilight sky, razor-sharp foreground textures)",
+    "Luminous Gouache & Botanical Illustration (richly detailed hand-painted scenery, layered foreground flora, textured cold-press paper grain, warm metallic gold-leaf highlights)",
+    "Atmospheric Magical Realism (bioluminescent warm floating embers and fireflies, rich architectural or natural depth, volumetric god-rays, dreamy cinematic color grading)",
+    "Luxury Editorial Still-Life & Environment (artisanal crafted objects set inside a breathtaking scenic veranda or mountain lodge, warm candlelit radiance, crisp optical focus)",
+    "Vibrant Contemporary Stained-Glass & Light Art (refraction of warm sunbeams through intricate colored glass, rich environmental depth, glowing atmospheric dust motes)",
+    "Masterpiece Oil Impasto Painting (expressive textured brushwork, dramatic warm chiaroscuro lighting, rich multi-layered background scenery, museum-grade color harmony)"
 ]
 
 # =====================================================================
