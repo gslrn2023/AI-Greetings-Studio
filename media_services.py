@@ -24,9 +24,9 @@ def upload_pil_image(image: Image.Image) -> str:
 
 def generate_tts_and_upload(tts_script: str, voice_archetype: str) -> tuple[str, float]:
     """
-    Calls ElevenLabs API for voice synthesis, calculates exact audio duration in seconds,
-    uploads to uguu.se, and returns (public_audio_url, duration_seconds).
-    Returns ("", 0.0) if tts_script is empty (solemn occasions).
+    Calls ElevenLabs API for voice synthesis with Speaker Boost enabled,
+    calculates exact audio duration in seconds, uploads to uguu.se,
+    and returns (public_audio_url, duration_seconds).
     """
     clean_script = (tts_script or "").strip()
     if not clean_script or voice_archetype == "none":
@@ -48,8 +48,10 @@ def generate_tts_and_upload(tts_script: str, voice_archetype: str) -> tuple[str,
         "text": clean_script,
         "model_id": config.ELEVENLABS_MODEL,
         "voice_settings": {
-            "stability": 0.50,
-            "similarity_boost": 0.75
+            "stability": 0.45,
+            "similarity_boost": 0.80,
+            "style": 0.35,
+            "use_speaker_boost": True
         }
     }
 
@@ -64,7 +66,6 @@ def generate_tts_and_upload(tts_script: str, voice_archetype: str) -> tuple[str,
         audio_info = MP3(io.BytesIO(audio_bytes))
         duration_sec = float(audio_info.info.length)
     except Exception:
-        # Fallback estimate (~2.5 words per second) if header parsing fails
         word_count = len(clean_script.split())
         duration_sec = max(3.5, word_count / 2.5)
 
