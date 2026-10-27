@@ -189,6 +189,7 @@ def build_renderscript(
         "width": config.VIDEO_WIDTH,
         "height": config.VIDEO_HEIGHT,
         "frame_rate": 30,
+        "crf":18,
         "duration": total_duration,
         "elements": elements
     }
