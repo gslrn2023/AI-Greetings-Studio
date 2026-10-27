@@ -1,0 +1,11 @@
+diffusers
+transformers
+accelerate
+torch
+gradio
+huggingface_hub
+spaces
+requests
+google-genai
+mutagen
+Pillow
