@@ -1,5 +1,6 @@
 import os
 import time
+import random
 import tempfile
 import requests
 import config
@@ -11,51 +12,59 @@ def build_renderscript(
     audio_duration: float,
     bgm_url: str
 ) -> dict:
-    """Builds a template-free 9:16 Creatomate RenderScript JSON payload."""
+    """Builds a high-motion, template-free 9:16 Creatomate RenderScript JSON payload."""
     comp_meta = blueprint.get("composition_metadata", {})
     overlay_title = comp_meta.get("overlay_title", "Warm Wishes")
     overlay_subtitle = comp_meta.get("overlay_subtitle", "")
     font_family = comp_meta.get("font_family", "Montserrat")
     primary_color = comp_meta.get("primary_color_hex", "#FFD700")
     accent_color = comp_meta.get("accent_color_hex", "#FFFFFF")
-    anim_choice = comp_meta.get("animation_type", "slide")
+    anim_choice = comp_meta.get("animation_type", "scale")
 
     has_tts = bool(audio_url and audio_duration > 0)
-    total_duration = round(max(6.0, audio_duration + config.AUDIO_PADDING_SECONDS), 2) if has_tts else config.DEFAULT_NO_TTS_DURATION
+    total_duration = (
+        round(max(6.5, audio_duration + config.AUDIO_PADDING_SECONDS), 2)
+        if has_tts
+        else config.DEFAULT_NO_TTS_DURATION
+    )
 
-    # Duck BGM volume when voiceover is active so voice is crystal clear
-    bgm_volume = "18%" if has_tts else "75%"
+    # Audio mixing: Drop BGM to 8% when voiceover is active; boost voiceover to 150%
+    bgm_volume = config.BGM_VOLUME_WITH_TTS if has_tts else config.BGM_VOLUME_NO_TTS
 
-    # Map AI Director animation choice to Creatomate text animations
-    if anim_choice == "scale":
+    # Randomize camera pan focal point so the 100% -> 126% zoom glides diagonally across the scene
+    pan_anchors = [
+        ("35%", "30%"),  # Glide toward upper-left subject
+        ("65%", "30%"),  # Glide toward upper-right subject
+        ("50%", "25%"),  # Glide upward toward sky/vista
+        ("45%", "40%")   # Balanced cinematic push-in
+    ]
+    cam_x_anchor, cam_y_anchor = random.choice(pan_anchors)
+
+    # Dynamic Headline word-by-word animation
+    if anim_choice == "slide":
         title_anim = {
-            "time": 0.3,
-            "duration": 1.0,
+            "time": 0,
+            "duration": 1.1,
             "easing": "back-out",
-            "type": "text-scale",
+            "type": "text-slide",
             "scope": "split-clip",
-            "split": "word"
-        }
-    elif anim_choice == "fade":
-        title_anim = {
-            "time": 0.3,
-            "duration": 1.2,
-            "easing": "quadratic-out",
-            "type": "fade"
+            "split": "word",
+            "distance": "120%",
+            "direction": "up"
         }
     else:
         title_anim = {
-            "time": 0.3,
-            "duration": 0.9,
-            "easing": "quadratic-out",
-            "type": "text-slide",
+            "time": 0,
+            "duration": 1.1,
+            "easing": "back-out",
+            "type": "text-scale",
             "scope": "split-clip",
-            "split": "line",
-            "direction": "up"
+            "split": "word",
+            "start_scale": "0%"
         }
 
     elements = [
-        # Track 1: Background Image with smooth Ken Burns slow zoom
+        # Track 1: Background Image with strong Ken Burns Diagonal Pan + Zoom (100% -> 126%)
         {
             "name": "Background-Visual",
             "type": "image",
@@ -69,55 +78,97 @@ def build_renderscript(
             "animations": [
                 {
                     "time": 0,
+                    "duration": 0.9,
+                    "easing": "quadratic-out",
+                    "type": "fade"
+                },
+                {
+                    "time": 0,
                     "duration": total_duration,
-                    "easing": "linear",
+                    "easing": "sine-in-out",
                     "type": "scale",
                     "fade": False,
                     "start_scale": "100%",
-                    "end_scale": "112%"
+                    "end_scale": "126%",
+                    "x_anchor": cam_x_anchor,
+                    "y_anchor": cam_y_anchor
                 }
             ]
         },
-        # Track 2: Lower-Third Contrast Card Scrim for guaranteed typography legibility
+        # Track 2: Full-Screen Decorative Luxury Border Frame (draws in with spring scale)
         {
-            "name": "Typography-Backdrop",
+            "name": "Luxury-Outer-Border",
             "type": "shape",
             "track": 2,
-            "time": 0.2,
-            "duration": total_duration - 0.2,
+            "time": 0.15,
+            "duration": total_duration - 0.15,
             "x": "50%",
-            "y": "81%",
-            "width": "90%",
-            "height": "24%",
+            "y": "50%",
+            "width": "93%",
+            "height": "95%",
             "x_anchor": "50%",
             "y_anchor": "50%",
             "path": "M 0 0 L 100 0 L 100 100 L 0 100 Z",
-            "fill_color": "rgba(10, 12, 18, 0.68)",
+            "fill_color": "rgba(0, 0, 0, 0)",
             "stroke_color": primary_color,
-            "stroke_width": "0.4 vmin",
-            "border_radius": "4 vmin",
-            "shadow_color": "rgba(0,0,0,0.65)",
-            "shadow_blur": "3 vmin",
+            "stroke_width": "0.35 vmin",
+            "border_radius": "3.5 vmin",
+            "opacity": "65%",
             "animations": [
                 {
                     "time": 0,
-                    "duration": 0.7,
-                    "easing": "quadratic-out",
-                    "type": "fade"
+                    "duration": 1.0,
+                    "easing": "back-out",
+                    "type": "scale",
+                    "fade": True,
+                    "start_scale": "92%",
+                    "end_scale": "100%"
                 }
             ]
         },
-        # Track 3: Main Headline Text
+        # Track 3: Lower-Third Contrast Glass Card (slides up from bottom with spring bounce)
+        {
+            "name": "Typography-Backdrop",
+            "type": "shape",
+            "track": 3,
+            "time": 0.25,
+            "duration": total_duration - 0.25,
+            "x": "50%",
+            "y": "80.5%",
+            "width": "88%",
+            "height": "23%",
+            "x_anchor": "50%",
+            "y_anchor": "50%",
+            "path": "M 0 0 L 100 0 L 100 100 L 0 100 Z",
+            "fill_color": "rgba(10, 12, 20, 0.76)",
+            "stroke_color": primary_color,
+            "stroke_width": "0.45 vmin",
+            "border_radius": "3.5 vmin",
+            "shadow_color": "rgba(0,0,0,0.75)",
+            "shadow_blur": "3.5 vmin",
+            "animations": [
+                {
+                    "time": 0,
+                    "duration": 0.85,
+                    "easing": "back-out",
+                    "type": "slide",
+                    "direction": "up",
+                    "distance": "45%",
+                    "fade": True
+                }
+            ]
+        },
+        # Track 4: Main Headline Text (word-by-word 3D pop/slide)
         {
             "name": "Headline-Text",
             "type": "text",
-            "track": 3,
-            "time": 0.3,
-            "duration": total_duration - 0.3,
+            "track": 4,
+            "time": 0.55,
+            "duration": total_duration - 0.55,
             "x": "50%",
-            "y": "76.5%",
+            "y": "75.0%",
             "width": "82%",
-            "height": "10%",
+            "height": "9.5%",
             "x_anchor": "50%",
             "y_anchor": "50%",
             "x_alignment": "50%",
@@ -126,21 +177,49 @@ def build_renderscript(
             "font_family": font_family,
             "font_weight": "700",
             "fill_color": primary_color,
-            "shadow_color": "rgba(0,0,0,0.8)",
-            "shadow_blur": "1.2 vmin",
+            "shadow_color": "rgba(0,0,0,0.85)",
+            "shadow_blur": "1.5 vmin",
             "animations": [title_anim]
         },
-        # Track 4: Subtitle / Message Text
+        # Track 5: Animated Golden Divider Line between Title and Subtitle
+        {
+            "name": "Accent-Divider-Line",
+            "type": "shape",
+            "track": 5,
+            "time": 0.75,
+            "duration": total_duration - 0.75,
+            "x": "50%",
+            "y": "80.3%",
+            "width": "36%",
+            "height": "0.35%",
+            "x_anchor": "50%",
+            "y_anchor": "50%",
+            "path": "M 0 0 L 100 0 L 100 100 L 0 100 Z",
+            "fill_color": primary_color,
+            "border_radius": "1 vmin",
+            "animations": [
+                {
+                    "time": 0,
+                    "duration": 0.8,
+                    "easing": "exponential-out",
+                    "type": "scale",
+                    "fade": True,
+                    "start_scale": "0%",
+                    "end_scale": "100%"
+                }
+            ]
+        },
+        # Track 6: Subtitle / Message Text (line-by-line upward reveal)
         {
             "name": "Subtitle-Text",
             "type": "text",
-            "track": 4,
-            "time": 0.6,
-            "duration": total_duration - 0.6,
+            "track": 6,
+            "time": 0.9,
+            "duration": total_duration - 0.9,
             "x": "50%",
             "y": "85.5%",
             "width": "80%",
-            "height": "9%",
+            "height": "8.5%",
             "x_anchor": "50%",
             "y_anchor": "50%",
             "x_alignment": "50%",
@@ -155,15 +234,20 @@ def build_renderscript(
                     "time": 0,
                     "duration": 0.9,
                     "easing": "quadratic-out",
-                    "type": "fade"
+                    "type": "text-slide",
+                    "scope": "split-clip",
+                    "split": "line",
+                    "direction": "up",
+                    "distance": "100%",
+                    "fade": True
                 }
             ]
         },
-        # Track 5: Background Music (auto-ducked and faded out at end)
+        # Track 7: Background Music (lowered to 8% when TTS is active, faded out at end)
         {
             "name": "BGM-Track",
             "type": "audio",
-            "track": 5,
+            "track": 7,
             "time": 0,
             "duration": total_duration,
             "source": bgm_url,
@@ -173,15 +257,15 @@ def build_renderscript(
         }
     ]
 
-    # Track 6: Voiceover Track (starts at 0.5s for natural breathing room)
+    # Track 8: Boosted Voiceover Track (150% volume, starts at 0.55s as title pops in)
     if has_tts:
         elements.append({
             "name": "Voiceover-Track",
             "type": "audio",
-            "track": 6,
-            "time": 0.5,
+            "track": 8,
+            "time": 0.55,
             "source": audio_url,
-            "volume": "100%"
+            "volume": config.TTS_VOLUME_BOOST
         })
 
     return {
@@ -189,7 +273,7 @@ def build_renderscript(
         "width": config.VIDEO_WIDTH,
         "height": config.VIDEO_HEIGHT,
         "frame_rate": 30,
-        "crf":18,
+        "crf": 18,
         "duration": total_duration,
         "elements": elements
     }
@@ -229,7 +313,6 @@ def render_greeting_video(
         raise RuntimeError(f"Creatomate Render Creation Error ({response.status_code}): {response.text}")
 
     render_data = response.json()
-    # Creatomate v2 returns a single object or list depending on endpoint options
     if isinstance(render_data, list):
         render_data = render_data[0]
 
@@ -237,7 +320,6 @@ def render_greeting_video(
     status = render_data.get("status")
     video_url = render_data.get("url")
 
-    # Poll status if render is queued/rendering
     poll_url = f"https://api.creatomate.com/v2/renders/{render_id}"
     max_wait_seconds = 120
     elapsed = 0
@@ -257,7 +339,6 @@ def render_greeting_video(
     if status != "succeeded" or not video_url:
         raise RuntimeError(f"Creatomate render timed out (last status: {status}).")
 
-    # Download MP4 to a local file so Gradio's DownloadButton works seamlessly on mobile & desktop
     vid_resp = requests.get(video_url, timeout=60)
     vid_resp.raise_for_status()
 
