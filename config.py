@@ -24,12 +24,12 @@ GEMINI_MODEL = "gemini-2.5-flash"
 ELEVENLABS_MODEL = os.environ.get("ELEVENLABS_MODEL", "eleven_multilingual_v2")
 
 # Flux Image Resolution (Optimal 9:16 1.2MP sweet spot for FLUX.1-schnell sharpness)
-IMAGE_WIDTH = 832
-IMAGE_HEIGHT = 1472
-FLUX_STEPS = 6
+IMAGE_WIDTH = 1088
+IMAGE_HEIGHT = 1920
+FLUX_STEPS = 8
 
 # Creatomate Render Output Resolution (9:16 Full HD Vertical)
-VIDEO_WIDTH = 1080
+VIDEO_WIDTH = 1088
 VIDEO_HEIGHT = 1920
 DEFAULT_NO_TTS_DURATION = 7.0  # Seconds when voiceover is muted (solemn/bereavement)
 AUDIO_PADDING_SECONDS = 2.2    # Tail buffer after voiceover finishes
