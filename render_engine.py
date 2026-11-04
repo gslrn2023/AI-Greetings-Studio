@@ -31,7 +31,7 @@ def build_renderscript(
     # Audio mixing: Drop BGM to 8% when voiceover is active; boost voiceover to 150%
     bgm_volume = config.BGM_VOLUME_WITH_TTS if has_tts else config.BGM_VOLUME_NO_TTS
 
-    # Randomize camera pan focal point so the 100% -> 126% zoom glides diagonally across the scene
+    # Randomize camera pan focal point so the 100% -> 110% zoom glides diagonally across the scene
     pan_anchors = [
         ("35%", "30%"),  # Glide toward upper-left subject
         ("65%", "30%"),  # Glide toward upper-right subject
@@ -64,7 +64,7 @@ def build_renderscript(
         }
 
     elements = [
-        # Track 1: Background Image with strong Ken Burns Diagonal Pan + Zoom (100% -> 126%)
+        # Track 1: Background Image with gentle Ken Burns Diagonal Pan + Zoom (100% -> 110%)
         {
             "name": "Background-Visual",
             "type": "image",
@@ -89,7 +89,7 @@ def build_renderscript(
                     "type": "scale",
                     "fade": False,
                     "start_scale": "100%",
-                    "end_scale": "126%",
+                    "end_scale": "110%",
                     "x_anchor": cam_x_anchor,
                     "y_anchor": cam_y_anchor
                 }
