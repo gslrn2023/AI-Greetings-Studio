@@ -272,7 +272,7 @@ def build_renderscript(
         "output_format": "mp4",
         "width": config.VIDEO_WIDTH,
         "height": config.VIDEO_HEIGHT,
-        "frame_rate": 30,
+        "frame_rate": 60,
         "crf": 18,
         "duration": total_duration,
         "elements": elements
