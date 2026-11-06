@@ -15,42 +15,40 @@ def generate_creative_blueprint(user_prompt: str, style_override: str = "Auto (A
     client = genai.Client(api_key=config.GEMINI_API_KEY)
     base_system_prompt = load_system_prompt()
 
-    # Sample 3 random creative lenses to break LLM repetition
     sampled_lenses = random.sample(config.CREATIVE_STYLE_LENSES, k=3)
-    lenses_text = "\n".join([f"- Option {i+1}: {lens}" for i, lens in enumerate(sampled_lenses)])
+    lenses_text = "\n".join([f"- {lens}" for lens in sampled_lenses])
 
     if style_override and style_override != "Auto (AI Director's Choice)":
-        style_directive = (
-            f"\nUSER STYLE OVERRIDE: You MUST craft the visual_prompt using the '{style_override}' aesthetic."
-        )
+        style_directive = f"USER STYLE OVERRIDE: Craft the visual_prompt strictly in the '{style_override}' style."
     else:
-        style_directive = (
-            f"\nCREATIVE DIVERSITY SEED: To ensure fresh, non-repetitive visual direction, select the most fitting "
-            f"aesthetic for this occasion from these 3 curated visual lenses (or blend them creatively):\n{lenses_text}"
-        )
+        style_directive = f"CREATIVE STYLE SEED (Pick or blend the best fit):\n{lenses_text}"
 
-    augmented_user_message = (
+    model_hint = (
+        "Optimize prompt for Tongyi-MAI/Z-Image-Turbo: emphasize rich spatial hierarchy, micro-textures, and atmospheric lighting."
+        if config.IMAGE_ENGINE == "Z_IMAGE"
+        else "Optimize prompt for FLUX.1-schnell: emphasize optical lens characteristics, physical material textures, and volumetric lighting."
+    )
+
+    user_message = (
         f"USER REQUEST: {user_prompt}\n"
         f"{style_directive}\n"
-        f"Generate the JSON blueprint now."
+        f"MODEL TARGET: {model_hint}\n"
+        f"Return raw JSON blueprint now."
     )
 
     response = client.models.generate_content(
         model=config.GEMINI_MODEL,
-        contents=augmented_user_message,
+        contents=user_message,
         config=types.GenerateContentConfig(
             system_instruction=base_system_prompt,
-            temperature=0.85,
+            temperature=0.88,
             top_p=0.92,
             response_mime_type="application/json"
         )
     )
 
-    raw_text = (response.text or "").strip()
-    raw_text = raw_text.replace("```json", "").replace("```", "").strip()
-
+    raw_text = (response.text or "").strip().replace("```json", "").replace("```", "").strip()
     try:
-        blueprint = json.loads(raw_text)
-        return blueprint
+        return json.loads(raw_text)
     except json.JSONDecodeError as e:
-        raise RuntimeError(f"Failed to parse AI Director JSON output: {e}\nRaw Output: {raw_text}")
+        raise RuntimeError(f"AI Director JSON parse error: {e}\nRaw Output: {raw_text}")
