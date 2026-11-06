@@ -1,49 +1,57 @@
 import io
+import os
+import tempfile
 import requests
 from mutagen.mp3 import MP3
 from PIL import Image
 import config
 
 def upload_bytes_to_uguu(file_bytes: bytes, filename: str, mime_type: str) -> str:
-    """Uploads an in-memory byte buffer to uguu.se and returns the public URL."""
     buf = io.BytesIO(file_bytes)
     files = {"files[]": (filename, buf, mime_type)}
     response = requests.post("https://uguu.se/upload", files=files, timeout=60)
     response.raise_for_status()
     res_json = response.json()
-
     if res_json.get("success") and res_json.get("files"):
         return res_json["files"][0]["url"]
-    raise RuntimeError(f"Uguu.se upload failed for {filename}: {response.text}")
+    raise RuntimeError(f"Uguu.se upload failed: {response.text}")
 
-def upload_pil_image(image: Image.Image) -> str:
-    """Converts a PIL Image to PNG bytes and uploads to uguu.se."""
+def save_and_optionally_upload_image(image: Image.Image, need_remote_url: bool = True) -> tuple[str, str]:
+    """Saves PIL image locally and uploads to uguu.se if needed. Returns (local_path, public_url)."""
+    temp_dir = tempfile.mkdtemp()
+    local_img_path = os.path.join(temp_dir, "artwork.png")
     buf = io.BytesIO()
     image.save(buf, format="PNG")
-    return upload_bytes_to_uguu(buf.getvalue(), "greeting_visual.png", "image/png")
+    png_bytes = buf.getvalue()
 
-def generate_tts_and_upload(tts_script: str, voice_archetype: str) -> tuple[str, float]:
+    with open(local_img_path, "wb") as f:
+        f.write(png_bytes)
+
+    public_url = upload_bytes_to_uguu(png_bytes, "artwork.png", "image/png") if need_remote_url else ""
+    return local_img_path, public_url
+
+def synthesize_voiceover(
+    tts_script: str,
+    voice_id: str,
+    need_remote_url: bool = True
+) -> tuple[str, str, float]:
     """
-    Calls ElevenLabs API for voice synthesis with Speaker Boost enabled,
-    calculates exact audio duration in seconds, uploads to uguu.se,
-    and returns (public_audio_url, duration_seconds).
+    Synthesizes speech via ElevenLabs.
+    Returns (local_mp3_path, public_audio_url, duration_seconds).
     """
     clean_script = (tts_script or "").strip()
-    if not clean_script or voice_archetype == "none":
-        return "", 0.0
+    if not clean_script or not voice_id:
+        return "", "", 0.0
 
     if not config.ELEVENLABS_API_KEY:
         raise ValueError("Missing ELEVENLABS_API_KEY in Hugging Face Space Secrets.")
 
-    voice_id = config.VOICE_MAP.get(voice_archetype, config.VOICE_MAP["warm_female"])
     url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}"
-
     headers = {
         "xi-api-key": config.ELEVENLABS_API_KEY,
         "Content-Type": "application/json",
         "Accept": "audio/mpeg"
     }
-
     payload = {
         "text": clean_script,
         "model_id": config.ELEVENLABS_MODEL,
@@ -60,14 +68,16 @@ def generate_tts_and_upload(tts_script: str, voice_archetype: str) -> tuple[str,
         raise RuntimeError(f"ElevenLabs API Error ({response.status_code}): {response.text}")
 
     audio_bytes = response.content
+    temp_dir = tempfile.mkdtemp()
+    local_mp3_path = os.path.join(temp_dir, "voiceover.mp3")
+    with open(local_mp3_path, "wb") as f:
+        f.write(audio_bytes)
 
-    # Calculate exact MP3 duration using mutagen
     try:
         audio_info = MP3(io.BytesIO(audio_bytes))
         duration_sec = float(audio_info.info.length)
     except Exception:
-        word_count = len(clean_script.split())
-        duration_sec = max(3.5, word_count / 2.5)
+        duration_sec = max(3.5, len(clean_script.split()) / 2.5)
 
-    public_audio_url = upload_bytes_to_uguu(audio_bytes, "greeting_voiceover.mp3", "audio/mpeg")
-    return public_audio_url, round(duration_sec, 2)
+    public_url = upload_bytes_to_uguu(audio_bytes, "voiceover.mp3", "audio/mpeg") if need_remote_url else ""
+    return local_mp3_path, public_url, round(duration_sec, 2)
