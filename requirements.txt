@@ -1,4 +1,4 @@
-diffusers
+git+https://github.com/huggingface/diffusers.git
 transformers
 accelerate
 torch
@@ -9,3 +9,5 @@ requests
 google-genai
 mutagen
 Pillow
+sentencepiece
+protobuf
