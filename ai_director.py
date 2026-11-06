@@ -12,7 +12,11 @@ def generate_creative_blueprint(user_prompt: str, style_override: str = "Auto (A
     if not config.GEMINI_API_KEY:
         raise ValueError("Missing GEMINI_API_KEY in Hugging Face Space Secrets.")
 
-    client = genai.Client(api_key=config.GEMINI_API_KEY)
+    # Force v1beta endpoint so system_instruction and JSON response_mime_type are supported
+    client = genai.Client(
+        api_key=config.GEMINI_API_KEY,
+        http_options=types.HttpOptions(api_version="v1beta")
+    )
     base_system_prompt = load_system_prompt()
 
     sampled_lenses = random.sample(config.CREATIVE_STYLE_LENSES, k=3)
