@@ -1,91 +1,137 @@
 import os
 import json
+import random
 import threading
 from datetime import datetime, timezone, timedelta
 
 # =====================================================================
-# 1. ENVIRONMENT SECRETS (Configure these in Hugging Face Space Secrets)
+# 1. ENVIRONMENT SECRETS
 # =====================================================================
 HF_TOKEN = os.environ.get("HF_TOKEN", "")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 ELEVENLABS_API_KEY = os.environ.get("ELEVENLABS_API_KEY", "")
 CREATOMATE_API_KEY = os.environ.get("CREATOMATE_API_KEY", "")
-APP_PASSCODE = os.environ.get("APP_PASSCODE", "admin123")
+APP_PASSCODE = os.environ.get("APP_PASSCODE", "")
 
 # =====================================================================
-# 2. GLOBAL TUNING & QUOTA VARIABLES
+# 2. MASTER MODULAR SWITCHBOARD
 # =====================================================================
+# IMAGE_ENGINE: "FLUX" (black-forest-labs/FLUX.1-schnell) | "Z_IMAGE" (Tongyi-MAI/Z-Image-Turbo)
+# Only the selected engine is loaded into VRAM to protect free GPU memory.
+IMAGE_ENGINE = os.environ.get("IMAGE_ENGINE", "FLUX").upper()
+
+# RENDER_ENGINE: "LOCAL" (Free Python FFmpeg+Pillow) | "CREATOMATE" (Cloud API) | "OFF" (URL Test Mode)
+RENDER_ENGINE = os.environ.get("RENDER_ENGINE", "LOCAL").upper()
+
 MAX_DAILY_GREETINGS = int(os.environ.get("MAX_DAILY_GREETINGS", 3))
 GEMINI_MODEL = "gemini-2.5-flash"
-
-# ElevenLabs Model:
-# "eleven_flash_v2_5" uses 0.5 credits/char (doubles Free Tier quota)
-# "eleven_multilingual_v2" uses 1.0 credit/char (richer emotional nuance)
 ELEVENLABS_MODEL = os.environ.get("ELEVENLABS_MODEL", "eleven_multilingual_v2")
 
-# Flux Image Resolution (Optimal 9:16 1.2MP sweet spot for FLUX.1-schnell sharpness)
+# =====================================================================
+# 3. RESOLUTION, TIMING & EXPERT AUDIO MIXING
+# =====================================================================
 IMAGE_WIDTH = 1088
 IMAGE_HEIGHT = 1920
 FLUX_STEPS = 8
+Z_IMAGE_STEPS = 9  # 9 steps = 8 DiT forwards for Z-Image-Turbo
 
-# Creatomate Render Output Resolution (9:16 Full HD Vertical)
 VIDEO_WIDTH = 1088
 VIDEO_HEIGHT = 1920
-DEFAULT_NO_TTS_DURATION = 7.0  # Seconds when voiceover is muted (solemn/bereavement)
-AUDIO_PADDING_SECONDS = 2.2    # Tail buffer after voiceover finishes
+VIDEO_FPS = 30
 
-# Audio Mixing Controls
-BGM_VOLUME_WITH_TTS = "8%"     # Subtle ambient bed when voiceover is speaking
-BGM_VOLUME_NO_TTS = "75%"      # Full emotional presence when voiceover is omitted
-TTS_VOLUME_BOOST = "150%"      # Amplifies ElevenLabs voiceover for crystal clarity
+# Unobstructed image showcase time before text & voiceover appear
+TEXT_REVEAL_DELAY = 4.0        # First 4 seconds show 100% pure artwork without text overlay
+AUDIO_PADDING_SECONDS = 2.0    # Tail buffer after voiceover completes
+DEFAULT_NO_TTS_DURATION = 9.0  # Total duration when voiceover is muted (4s pure art + 5s text)
+
+# Audio Mixing
+BGM_VOLUME_WITH_TTS = "8%"     # 0.08 amplitude in FFmpeg
+BGM_VOLUME_NO_TTS = "75%"      # 0.75 amplitude in FFmpeg
+TTS_VOLUME_BOOST = "150%"      # 1.50 amplitude in FFmpeg
 
 # =====================================================================
-# 3. ELEVENLABS FREE-TIER VOICE PALETTE (100% Free-Tier API Compatible)
+# 4. VALIDATED ELEVENLABS FREE-TIER PREMADE VOICE CATALOG
 # =====================================================================
-VOICE_MAP = {
-    "warm_female": "XrExE9yKIg1WjnnlVkGX",      # Matilda - Warm, friendly, articulate
-    "energetic_male": "TX3LPaxmHKxFdv7VOQHJ",   # Liam - Energetic, upbeat, celebratory
-    "deep_celebratory": "pNInz6obpgDQGcFmaJgB", # Adam - Deep, cinematic, grand occasions
-    "soft_empathetic": "21m00Tcm4TlvDq8ikWAM"   # Rachel - Calm, gentle, heartfelt
+VOICE_CATALOG = {
+    "Matilda (Warm Female)": {"id": "XrExE9yKIg1WjnnlVkGX", "archetype": "warm_female"},
+    "Sarah (Soft Expressive Female)": {"id": "EXAVITQu4vr4xnSDxMaL", "archetype": "soft_empathetic"},
+    "Rachel (Calm Empathetic Female)": {"id": "21m00Tcm4TlvDq8ikWAM", "archetype": "soft_empathetic"},
+    "Alice (Clear British Female)": {"id": "Xb7hH8MSUJpSbSDYk0k2", "archetype": "warm_female"},
+    "Liam (Energetic Upbeat Male)": {"id": "TX3LPaxmHKxFdv7VOQHJ", "archetype": "energetic_male"},
+    "Brian (Deep Resonant Male)": {"id": "nPczCjzI2devNBz1zQrb", "archetype": "deep_celebratory"},
+    "Adam (Classic Cinematic Male)": {"id": "pNInz6obpgDQGcFmaJgB", "archetype": "deep_celebratory"},
+    "George (Warm Storyteller Male)": {"id": "JBFqnCBsd6RMkjVDRZzb", "archetype": "warm_male"}
 }
 
-# =====================================================================
-# 4. BACKGROUND MUSIC MAPPING (GitHub Raw CDN)
-# =====================================================================
-BGM_MAP = {
-    "calm": "https://raw.githubusercontent.com/gslrn2023/Greetings-Bgms/main/calm.mp3",
-    "elegant": "https://raw.githubusercontent.com/gslrn2023/Greetings-Bgms/main/elegant.mp3",
-    "energetic": "https://raw.githubusercontent.com/gslrn2023/Greetings-Bgms/main/energetic.mp3",
-    "festive": "https://raw.githubusercontent.com/gslrn2023/Greetings-Bgms/main/festive.mp3",
-    "sad": "https://raw.githubusercontent.com/gslrn2023/Greetings-Bgms/main/sad.mp3"
+ARCHETYPE_TO_VOICE_ID = {
+    "warm_female": "XrExE9yKIg1WjnnlVkGX",
+    "soft_empathetic": "EXAVITQu4vr4xnSDxMaL",
+    "energetic_male": "TX3LPaxmHKxFdv7VOQHJ",
+    "deep_celebratory": "nPczCjzI2devNBz1zQrb",
+    "warm_male": "JBFqnCBsd6RMkjVDRZzb"
 }
 
+def resolve_voice_id(voice_choice: str, ai_archetype: str) -> str:
+    if voice_choice and voice_choice in VOICE_CATALOG:
+        return VOICE_CATALOG[voice_choice]["id"]
+    return ARCHETYPE_TO_VOICE_ID.get(ai_archetype, "XrExE9yKIg1WjnnlVkGX")
+
 # =====================================================================
-# 5. ANTI-REPETITION CREATIVE STYLE LENSES
+# 5. EXPANDABLE BGM LIBRARY (Add new filenames/URLs to any category list)
+# =====================================================================
+BGM_BASE_URL = "https://raw.githubusercontent.com/gslrn2023/Greetings-Bgms/main/"
+
+BGM_LIBRARY = {
+    "festive": [
+        f"{BGM_BASE_URL}festive.mp3",
+        # Add more later, e.g.: f"{BGM_BASE_URL}festive_2.mp3",
+    ],
+    "calm": [
+        f"{BGM_BASE_URL}calm.mp3",
+    ],
+    "energetic": [
+        f"{BGM_BASE_URL}energetic.mp3",
+    ],
+    "elegant": [
+        f"{BGM_BASE_URL}elegant.mp3",
+    ],
+    "sad": [
+        f"{BGM_BASE_URL}sad.mp3",
+    ],
+    "spiritual": [
+        f"{BGM_BASE_URL}calm.mp3",
+    ],
+    "romantic": [
+        f"{BGM_BASE_URL}elegant.mp3",
+    ]
+}
+
+def pick_bgm_url(mood: str) -> str:
+    clean_mood = (mood or "festive").lower().strip()
+    track_list = BGM_LIBRARY.get(clean_mood, BGM_LIBRARY["festive"])
+    return random.choice(track_list)
+
+# =====================================================================
+# 6. CREATIVE STYLE LENSES FOR IMAGE DIVERSITY
 # =====================================================================
 CREATIVE_STYLE_LENSES = [
-    "35mm Analog Editorial Photography (Kodak Portra 400 film, golden-hour rim light, shallow depth of field, rich environmental storytelling, natural lens flare)",
-    "Cinematic National Geographic Expedition Photography (wide-angle dramatic landscape vista, warm campfire or lantern glow contrasting with deep twilight sky, razor-sharp foreground textures)",
-    "Luminous Gouache & Botanical Illustration (richly detailed hand-painted scenery, layered foreground flora, textured cold-press paper grain, warm metallic gold-leaf highlights)",
-    "Atmospheric Magical Realism (bioluminescent warm floating embers and fireflies, rich architectural or natural depth, volumetric god-rays, dreamy cinematic color grading)",
-    "Luxury Editorial Still-Life & Environment (artisanal crafted objects set inside a breathtaking scenic veranda or mountain lodge, warm candlelit radiance, crisp optical focus)",
-    "Vibrant Contemporary Stained-Glass & Light Art (refraction of warm sunbeams through intricate colored glass, rich environmental depth, glowing atmospheric dust motes)",
-    "Masterpiece Oil Impasto Painting (expressive textured brushwork, dramatic warm chiaroscuro lighting, rich multi-layered background scenery, museum-grade color harmony)"
+    "35mm Analog Editorial Photography (Kodak Portra 400 grain, golden-hour rim light, shallow depth of field, rich environmental storytelling)",
+    "Cinematic National Geographic Expedition Photography (dramatic landscape vista, warm lantern or fire glow contrasting against twilight sky)",
+    "Luminous Gouache & Botanical Illustration (hand-painted scenery, layered foreground flora, cold-press paper texture, warm metallic highlights)",
+    "Atmospheric Magical Realism (bioluminescent floating embers and fireflies, volumetric god-rays, dreamy cinematic color grading)",
+    "Luxury Editorial Still-Life & Scenic Architecture (artisanal crafted objects set inside a breathtaking scenic veranda or mountain lodge)",
+    "Masterpiece Oil Impasto Painting (expressive textured brushwork, dramatic warm chiaroscuro lighting, museum-grade color harmony)"
 ]
 
 # =====================================================================
-# 6. THREAD-SAFE DAILY RATE LIMITER (IST Timezone Aligned)
+# 7. DAILY QUOTA TRACKER (IST)
 # =====================================================================
 QUOTA_FILE = "daily_usage.json"
 _quota_lock = threading.Lock()
 IST = timezone(timedelta(hours=5, minutes=30))
 
-def get_today_str() -> str:
-    return datetime.now(IST).strftime("%Y-%m-%d")
-
 def get_quota_status() -> tuple[int, int]:
-    """Returns (used_today, remaining_today)."""
-    today = get_today_str()
+    today = datetime.now(IST).strftime("%Y-%m-%d")
     with _quota_lock:
         if not os.path.exists(QUOTA_FILE):
             return 0, MAX_DAILY_GREETINGS
@@ -100,8 +146,7 @@ def get_quota_status() -> tuple[int, int]:
             return 0, MAX_DAILY_GREETINGS
 
 def increment_quota() -> int:
-    """Increments today's usage count and returns the new used count."""
-    today = get_today_str()
+    today = datetime.now(IST).strftime("%Y-%m-%d")
     with _quota_lock:
         used = 0
         if os.path.exists(QUOTA_FILE):
