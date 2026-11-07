@@ -1,4 +1,5 @@
 import json
+import time
 import random
 from google import genai
 from google.genai import types
@@ -8,7 +9,11 @@ def load_system_prompt() -> str:
     with open("AI_prompt.txt", "r", encoding="utf-8") as f:
         return f.read()
 
-def generate_creative_blueprint(user_prompt: str, style_override: str = "Auto - AI Choice") -> dict:
+def generate_creative_blueprint(
+    user_prompt: str,
+    style_override: str = "Auto - AI Choice",
+    status_callback=None
+) -> dict:
     if not config.GEMINI_API_KEY:
         raise ValueError("Missing GEMINI_API_KEY in Hugging Face Space Secrets.")
 
@@ -40,19 +45,30 @@ def generate_creative_blueprint(user_prompt: str, style_override: str = "Auto - 
         f"Return raw JSON blueprint now."
     )
 
-    response = client.models.generate_content(
-        model=config.GEMINI_MODEL,
-        contents=user_message,
-        config=types.GenerateContentConfig(
-            system_instruction=base_system_prompt,
-            temperature=0.88,
-            top_p=0.92,
-            response_mime_type="application/json"
-        )
-    )
+    max_attempts = 2
+    last_error = None
 
-    raw_text = (response.text or "").strip().replace("```json", "").replace("```", "").strip()
-    try:
-        return json.loads(raw_text)
-    except json.JSONDecodeError as e:
-        raise RuntimeError(f"AI Director JSON parse error: {e}\nRaw Output: {raw_text}")
+    for attempt in range(1, max_attempts + 1):
+        try:
+            response = client.models.generate_content(
+                model=config.GEMINI_MODEL,
+                contents=user_message,
+                config=types.GenerateContentConfig(
+                    system_instruction=base_system_prompt,
+                    temperature=0.88,
+                    top_p=0.92,
+                    response_mime_type="application/json"
+                )
+            )
+            raw_text = (response.text or "").strip().replace("```json", "").replace("```", "").strip()
+            return json.loads(raw_text)
+
+        except Exception as e:
+            last_error = e
+            print(f"[AI Director] Attempt {attempt}/{max_attempts} failed: {e}")
+            if attempt < max_attempts:
+                if status_callback:
+                    status_callback("⏳ AI Director is busy, retrying in 30 seconds (Attempt 2/2)...")
+                time.sleep(30)
+
+    raise RuntimeError(f"AI Director unavailable after 2 attempts: {last_error}")
