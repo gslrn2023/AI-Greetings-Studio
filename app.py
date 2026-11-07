@@ -59,9 +59,9 @@ def run_pipeline(
 
         # Step 3: Voiceover Synthesis (Routes Indian context to Vanishree/Sid, Global to Matilda/Will)
         if tts_script and ai_archetype != "none":
-            chosen_voice_id = config.resolve_voice_id(voice_override, ai_archetype, cultural_context)
+            voice_plan = config.resolve_voice_plan(voice_override, ai_archetype, cultural_context)
             progress(0.68, desc="Step 3/4: Synthesizing voiceover...")
-            local_tts_path, audio_url, audio_dur = synthesize_voiceover(tts_script, chosen_voice_id, need_remote_url=need_uguu)
+            local_tts_path, audio_url, audio_dur = synthesize_voiceover(tts_script, voice_plan, need_remote_url=need_uguu)
         else:
             progress(0.68, desc="Step 3/4: Synthesizing voiceover...")
             local_tts_path, audio_url, audio_dur = "", "", 0.0
