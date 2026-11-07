@@ -11,3 +11,4 @@ mutagen
 Pillow
 sentencepiece
 protobuf
+edge-tts
