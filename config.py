@@ -44,10 +44,15 @@ TEXT_REVEAL_DELAY = 4.0        # First 4 seconds show 100% pure artwork without 
 AUDIO_PADDING_SECONDS = 2.0    # Tail buffer after voiceover completes
 DEFAULT_NO_TTS_DURATION = 9.0  # Total duration when voiceover is muted (4s pure art + 5s text)
 
-# Audio Mixing
-BGM_VOLUME_WITH_TTS = "8%"     # 0.08 amplitude in FFmpeg
-BGM_VOLUME_NO_TTS = "75%"      # 0.75 amplitude in FFmpeg
-TTS_VOLUME_BOOST = "150%"      # 1.50 amplitude in FFmpeg
+# Audio Mixing (Used by both Local FFmpeg and Creatomate)
+BGM_INTRO_VOLUME = 0.28        # 28% BGM volume during the first 4.0s visual intro
+BGM_DUCKED_VOLUME = 0.14       # 14% BGM volume once voiceover starts speaking
+BGM_NO_TTS_VOLUME = 0.75       # 75% BGM volume when voiceover is muted (solemn occasions)
+TTS_VOLUME_MULTIPLIER = 1.85   # 185% Voiceover volume boost (paired with broadcast limiter)
+
+BGM_VOLUME_WITH_TTS = "14%"    # For Creatomate mode
+BGM_VOLUME_NO_TTS = "75%"      # For Creatomate mode
+TTS_VOLUME_BOOST = "165%"      # For Creatomate mode
 
 # =====================================================================
 # 4. VALIDATED ELEVENLABS FREE-TIER PREMADE VOICE CATALOG
