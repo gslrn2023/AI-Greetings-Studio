@@ -8,11 +8,10 @@ def load_system_prompt() -> str:
     with open("AI_prompt.txt", "r", encoding="utf-8") as f:
         return f.read()
 
-def generate_creative_blueprint(user_prompt: str, style_override: str = "Auto (AI Director's Choice)") -> dict:
+def generate_creative_blueprint(user_prompt: str, style_override: str = "Auto - AI Choice") -> dict:
     if not config.GEMINI_API_KEY:
         raise ValueError("Missing GEMINI_API_KEY in Hugging Face Space Secrets.")
 
-    # Force v1beta endpoint so system_instruction and JSON response_mime_type are supported
     client = genai.Client(
         api_key=config.GEMINI_API_KEY,
         http_options=types.HttpOptions(api_version="v1beta")
@@ -22,8 +21,9 @@ def generate_creative_blueprint(user_prompt: str, style_override: str = "Auto (A
     sampled_lenses = random.sample(config.CREATIVE_STYLE_LENSES, k=3)
     lenses_text = "\n".join([f"- {lens}" for lens in sampled_lenses])
 
-    if style_override and style_override != "Auto (AI Director's Choice)":
-        style_directive = f"USER STYLE OVERRIDE: Craft the visual_prompt strictly in the '{style_override}' style."
+    if style_override and style_override in config.STYLE_MAP:
+        full_style_desc = config.STYLE_MAP[style_override]
+        style_directive = f"USER STYLE OVERRIDE: Craft the visual_prompt strictly in the '{full_style_desc}' style."
     else:
         style_directive = f"CREATIVE STYLE SEED (Pick or blend the best fit):\n{lenses_text}"
 
