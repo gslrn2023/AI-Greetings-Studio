@@ -17,7 +17,6 @@ APP_PASSCODE = os.environ.get("APP_PASSCODE", "")
 # 2. MASTER MODULAR SWITCHBOARD
 # =====================================================================
 # IMAGE_ENGINE: "FLUX" (black-forest-labs/FLUX.1-schnell) | "Z_IMAGE" (Tongyi-MAI/Z-Image-Turbo)
-# Only the selected engine is loaded into VRAM to protect free GPU memory.
 IMAGE_ENGINE = os.environ.get("IMAGE_ENGINE", "FLUX").upper()
 
 # RENDER_ENGINE: "LOCAL" (Free Python FFmpeg+Pillow) | "CREATOMATE" (Cloud API) | "OFF" (URL Test Mode)
@@ -33,21 +32,20 @@ ELEVENLABS_MODEL = os.environ.get("ELEVENLABS_MODEL", "eleven_multilingual_v2")
 IMAGE_WIDTH = 1088
 IMAGE_HEIGHT = 1920
 FLUX_STEPS = 8
-Z_IMAGE_STEPS = 9  # 9 steps = 8 DiT forwards for Z-Image-Turbo
+Z_IMAGE_STEPS = 9
 
 VIDEO_WIDTH = 1088
 VIDEO_HEIGHT = 1920
 VIDEO_FPS = 30
 
-# Unobstructed image showcase time before text & voiceover appear
 TEXT_REVEAL_DELAY = 4.0        # First 4 seconds show 100% pure artwork without text overlay
 AUDIO_PADDING_SECONDS = 2.0    # Tail buffer after voiceover completes
-DEFAULT_NO_TTS_DURATION = 9.0  # Total duration when voiceover is muted (4s pure art + 5s text)
+DEFAULT_NO_TTS_DURATION = 9.0  # Total duration when voiceover is muted
 
 # Audio Mixing (Used by both Local FFmpeg and Creatomate)
 BGM_INTRO_VOLUME = 0.32        # 28% BGM volume during the first 4.0s visual intro
 BGM_DUCKED_VOLUME = 0.16       # 14% BGM volume once voiceover starts speaking
-BGM_NO_TTS_VOLUME = 0.75       # 75% BGM volume when voiceover is muted (solemn occasions)
+BGM_NO_TTS_VOLUME = 0.75       # 75% BGM volume when voiceover is muted
 TTS_VOLUME_MULTIPLIER = 1.85   # 185% Voiceover volume boost (paired with broadcast limiter)
 
 BGM_VOLUME_WITH_TTS = "14%"    # For Creatomate mode
@@ -55,41 +53,58 @@ BGM_VOLUME_NO_TTS = "75%"      # For Creatomate mode
 TTS_VOLUME_BOOST = "165%"      # For Creatomate mode
 
 # =====================================================================
-# 4. VALIDATED ELEVENLABS FREE-TIER PREMADE VOICE CATALOG
+# 4. SMART VOICE SELECTION (GENDER + CONTEXT ROUTING)
 # =====================================================================
-VOICE_CATALOG = {
-    "Matilda (Warm Female)": {"id": "XrExE9yKIg1WjnnlVkGX", "archetype": "warm_female"},
-    "Sarah (Soft Expressive Female)": {"id": "EXAVITQu4vr4xnSDxMaL", "archetype": "soft_empathetic"},
-    "Rachel (Calm Empathetic Female)": {"id": "21m00Tcm4TlvDq8ikWAM", "archetype": "soft_empathetic"},
-    "Alice (Clear British Female)": {"id": "Xb7hH8MSUJpSbSDYk0k2", "archetype": "warm_female"},
-    "Liam (Energetic Upbeat Male)": {"id": "TX3LPaxmHKxFdv7VOQHJ", "archetype": "energetic_male"},
-    "Brian (Deep Resonant Male)": {"id": "nPczCjzI2devNBz1zQrb", "archetype": "deep_celebratory"},
-    "Adam (Classic Cinematic Male)": {"id": "pNInz6obpgDQGcFmaJgB", "archetype": "deep_celebratory"},
-    "George (Warm Storyteller Male)": {"id": "JBFqnCBsd6RMkjVDRZzb", "archetype": "warm_male"}
+VOICE_IDS = {
+    "matilda": "XrExE9yKIg1WjnnlVkGX",  # Warm, festive female
+    "sarah": "EXAVITQu4vr4xnSDxMaL",    # Soft, expressive female
+    "rachel": "21m00Tcm4TlvDq8ikWAM",   # Calm, empathetic female
+    "alice": "Xb7hH8MSUJpSbSDYk0k2",    # Clear, elegant female
+    "liam": "TX3LPaxmHKxFdv7VOQHJ",     # Energetic, upbeat male
+    "brian": "nPczCjzI2devNBz1zQrb",    # Deep, resonant celebratory male
+    "adam": "pNInz6obpgDQGcFmaJgB",     # Classic cinematic male
+    "george": "JBFqnCBsd6RMkjVDRZzb"    # Warm storyteller male
 }
 
 ARCHETYPE_TO_VOICE_ID = {
-    "warm_female": "XrExE9yKIg1WjnnlVkGX",
-    "soft_empathetic": "EXAVITQu4vr4xnSDxMaL",
-    "energetic_male": "TX3LPaxmHKxFdv7VOQHJ",
-    "deep_celebratory": "nPczCjzI2devNBz1zQrb",
-    "warm_male": "JBFqnCBsd6RMkjVDRZzb"
+    "warm_female": VOICE_IDS["matilda"],
+    "soft_empathetic": VOICE_IDS["sarah"],
+    "energetic_male": VOICE_IDS["liam"],
+    "deep_celebratory": VOICE_IDS["brian"],
+    "warm_male": VOICE_IDS["george"]
 }
 
-def resolve_voice_id(voice_choice: str, ai_archetype: str) -> str:
-    if voice_choice and voice_choice in VOICE_CATALOG:
-        return VOICE_CATALOG[voice_choice]["id"]
-    return ARCHETYPE_TO_VOICE_ID.get(ai_archetype, "XrExE9yKIg1WjnnlVkGX")
+def resolve_voice_id(voice_option: str, ai_archetype: str, bgm_mood: str = "festive") -> str:
+    """Routes 'Auto - AI Choice', 'Female', or 'Male' to the best contextual ElevenLabs voice ID."""
+    choice = (voice_option or "Auto - AI Choice").strip().lower()
+    mood = (bgm_mood or "festive").strip().lower()
+    archetype = (ai_archetype or "warm_female").strip().lower()
+
+    if choice == "female":
+        if mood in ("calm", "sad", "spiritual") or archetype == "soft_empathetic":
+            return random.choice([VOICE_IDS["sarah"], VOICE_IDS["rachel"]])
+        if mood in ("elegant", "romantic"):
+            return VOICE_IDS["alice"]
+        return VOICE_IDS["matilda"]
+
+    if choice == "male":
+        if mood == "energetic" or archetype == "energetic_male":
+            return VOICE_IDS["liam"]
+        if mood in ("elegant", "festive") and archetype == "deep_celebratory":
+            return random.choice([VOICE_IDS["brian"], VOICE_IDS["adam"]])
+        return VOICE_IDS["george"]
+
+    # Default: Auto - AI Choice
+    return ARCHETYPE_TO_VOICE_ID.get(archetype, VOICE_IDS["matilda"])
 
 # =====================================================================
-# 5. EXPANDABLE BGM LIBRARY (Add new filenames/URLs to any category list)
+# 5. EXPANDABLE BGM LIBRARY
 # =====================================================================
 BGM_BASE_URL = "https://raw.githubusercontent.com/gslrn2023/Greetings-Bgms/main/"
 
 BGM_LIBRARY = {
     "festive": [
         f"{BGM_BASE_URL}festive.mp3",
-        # Add more later, e.g.: f"{BGM_BASE_URL}festive_2.mp3",
     ],
     "calm": [
         f"{BGM_BASE_URL}calm.mp3",
@@ -117,16 +132,18 @@ def pick_bgm_url(mood: str) -> str:
     return random.choice(track_list)
 
 # =====================================================================
-# 6. CREATIVE STYLE LENSES FOR IMAGE DIVERSITY
+# 6. MOBILE-FRIENDLY VISUAL ART STYLE MAP
 # =====================================================================
-CREATIVE_STYLE_LENSES = [
-    "35mm Analog Editorial Photography (Kodak Portra 400 grain, golden-hour rim light, shallow depth of field, rich environmental storytelling)",
-    "Cinematic National Geographic Expedition Photography (dramatic landscape vista, warm lantern or fire glow contrasting against twilight sky)",
-    "Luminous Gouache & Botanical Illustration (hand-painted scenery, layered foreground flora, cold-press paper texture, warm metallic highlights)",
-    "Atmospheric Magical Realism (bioluminescent floating embers and fireflies, volumetric god-rays, dreamy cinematic color grading)",
-    "Luxury Editorial Still-Life & Scenic Architecture (artisanal crafted objects set inside a breathtaking scenic veranda or mountain lodge)",
-    "Masterpiece Oil Impasto Painting (expressive textured brushwork, dramatic warm chiaroscuro lighting, museum-grade color harmony)"
-]
+STYLE_MAP = {
+    "35mm Analog": "35mm Analog Editorial Photography (Kodak Portra 400 grain, golden-hour rim light, shallow depth of field, rich environmental storytelling)",
+    "Cinematic": "Cinematic National Geographic Expedition Photography (dramatic landscape vista, warm lantern or fire glow contrasting against twilight sky)",
+    "Luminous Gouache": "Luminous Gouache & Botanical Illustration (hand-painted scenery, layered foreground flora, cold-press paper texture, warm metallic highlights)",
+    "Magical Realism": "Atmospheric Magical Realism (bioluminescent floating embers and fireflies, volumetric god-rays, dreamy cinematic color grading)",
+    "Luxury Still-Life": "Luxury Editorial Still-Life & Scenic Architecture (artisanal crafted objects set inside a breathtaking scenic veranda or mountain lodge)",
+    "Oil Impasto": "Masterpiece Oil Impasto Painting (expressive textured brushwork, dramatic warm chiaroscuro lighting, museum-grade color harmony)"
+}
+
+CREATIVE_STYLE_LENSES = list(STYLE_MAP.values())
 
 # =====================================================================
 # 7. DAILY QUOTA TRACKER (IST)
