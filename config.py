@@ -43,8 +43,8 @@ AUDIO_PADDING_SECONDS = 2.0    # Tail buffer after voiceover completes
 DEFAULT_NO_TTS_DURATION = 9.0  # Total duration when voiceover is muted
 
 # Audio Mixing (Used by both Local FFmpeg and Creatomate)
-BGM_INTRO_VOLUME = 0.32        # 28% BGM volume during the first 4.0s visual intro
-BGM_DUCKED_VOLUME = 0.16       # 14% BGM volume once voiceover starts speaking
+BGM_INTRO_VOLUME = 0.28        # 28% BGM volume during the first 4.0s visual intro
+BGM_DUCKED_VOLUME = 0.14       # 14% BGM volume once voiceover starts speaking
 BGM_NO_TTS_VOLUME = 0.75       # 75% BGM volume when voiceover is muted
 TTS_VOLUME_MULTIPLIER = 1.85   # 185% Voiceover volume boost (paired with broadcast limiter)
 
@@ -53,49 +53,47 @@ BGM_VOLUME_NO_TTS = "75%"      # For Creatomate mode
 TTS_VOLUME_BOOST = "165%"      # For Creatomate mode
 
 # =====================================================================
-# 4. SMART VOICE SELECTION (GENDER + CONTEXT ROUTING)
+# 4. CULTURAL + GENDER VOICE ROUTING (INDIAN VS. GLOBAL)
 # =====================================================================
 VOICE_IDS = {
-    "matilda": "XrExE9yKIg1WjnnlVkGX",  # Warm, festive female
-    "sarah": "EXAVITQu4vr4xnSDxMaL",    # Soft, expressive female
-    "rachel": "21m00Tcm4TlvDq8ikWAM",   # Calm, empathetic female
-    "alice": "Xb7hH8MSUJpSbSDYk0k2",    # Clear, elegant female
-    "liam": "TX3LPaxmHKxFdv7VOQHJ",     # Energetic, upbeat male
-    "brian": "nPczCjzI2devNBz1zQrb",    # Deep, resonant celebratory male
-    "adam": "pNInz6obpgDQGcFmaJgB",     # Classic cinematic male
-    "george": "JBFqnCBsd6RMkjVDRZzb"    # Warm storyteller male
+    "indian_female": "EQajdcMa8fccc3KCqwGO",  # Vanishree (Indian English Female)
+    "indian_male": "0muxiGNHAVvmM1qWRtyV",    # Sid (Indian English Male)
+    "global_female": "XrExE9yKIg1WjnnlVkGX",  # Matilda (Global English Female)
+    "global_male": "bIHbv24MWmeRgasZH58o"     # Will (Global English Male)
 }
 
-ARCHETYPE_TO_VOICE_ID = {
-    "warm_female": VOICE_IDS["matilda"],
-    "soft_empathetic": VOICE_IDS["sarah"],
-    "energetic_male": VOICE_IDS["liam"],
-    "deep_celebratory": VOICE_IDS["brian"],
-    "warm_male": VOICE_IDS["george"]
-}
-
-def resolve_voice_id(voice_option: str, ai_archetype: str, bgm_mood: str = "festive") -> str:
-    """Routes 'Auto - AI Choice', 'Female', or 'Male' to the best contextual ElevenLabs voice ID."""
+def resolve_voice_id(
+    voice_option: str,
+    ai_archetype: str,
+    cultural_context: str = "global"
+) -> str:
+    """
+    Routes voice selection across Indian (Vanishree/Sid) and Global (Matilda/Will) accents
+    based on user dropdown choice ('Auto - AI Choice', 'Female', 'Male') and AI context.
+    """
     choice = (voice_option or "Auto - AI Choice").strip().lower()
-    mood = (bgm_mood or "festive").strip().lower()
+    culture = (cultural_context or "global").strip().lower()
     archetype = (ai_archetype or "warm_female").strip().lower()
 
+    is_indian = (culture == "indian")
+
+    # Explicit Gender Override from UI Dropdown
     if choice == "female":
-        if mood in ("calm", "sad", "spiritual") or archetype == "soft_empathetic":
-            return random.choice([VOICE_IDS["sarah"], VOICE_IDS["rachel"]])
-        if mood in ("elegant", "romantic"):
-            return VOICE_IDS["alice"]
-        return VOICE_IDS["matilda"]
-
+        return VOICE_IDS["indian_female"] if is_indian else VOICE_IDS["global_female"]
     if choice == "male":
-        if mood == "energetic" or archetype == "energetic_male":
-            return VOICE_IDS["liam"]
-        if mood in ("elegant", "festive") and archetype == "deep_celebratory":
-            return random.choice([VOICE_IDS["brian"], VOICE_IDS["adam"]])
-        return VOICE_IDS["george"]
+        return VOICE_IDS["indian_male"] if is_indian else VOICE_IDS["global_male"]
 
-    # Default: Auto - AI Choice
-    return ARCHETYPE_TO_VOICE_ID.get(archetype, VOICE_IDS["matilda"])
+    # Auto - AI Choice: Infer gender from AI Director's voice_archetype
+    is_male_archetype = any(k in archetype for k in ("male", "deep_celebratory"))
+    if is_male_archetype:
+        return VOICE_IDS["indian_male"] if is_indian else VOICE_IDS["global_male"]
+    return VOICE_IDS["indian_female"] if is_indian else VOICE_IDS["global_female"]
+
+def get_fallback_voice_id(failed_voice_id: str) -> str:
+    """If an Indian community voice hits a free-tier restriction, fall back to same-gender Global premade voice."""
+    if failed_voice_id == VOICE_IDS["indian_male"]:
+        return VOICE_IDS["global_male"]
+    return VOICE_IDS["global_female"]
 
 # =====================================================================
 # 5. EXPANDABLE BGM LIBRARY
