@@ -45,8 +45,8 @@ AUDIO_PADDING_SECONDS = 2.0    # Tail buffer after voiceover completes
 DEFAULT_NO_TTS_DURATION = 9.0  # Total duration when voiceover is muted (4s pure art + 5s text)
 
 # Audio Mixing (Used by both Local FFmpeg and Creatomate)
-BGM_INTRO_VOLUME = 0.28        # 28% BGM volume during the first 4.0s visual intro
-BGM_DUCKED_VOLUME = 0.14       # 14% BGM volume once voiceover starts speaking
+BGM_INTRO_VOLUME = 0.32        # 28% BGM volume during the first 4.0s visual intro
+BGM_DUCKED_VOLUME = 0.16       # 14% BGM volume once voiceover starts speaking
 BGM_NO_TTS_VOLUME = 0.75       # 75% BGM volume when voiceover is muted (solemn occasions)
 TTS_VOLUME_MULTIPLIER = 1.85   # 185% Voiceover volume boost (paired with broadcast limiter)
 
