@@ -9,6 +9,7 @@ from datetime import datetime, timezone, timedelta
 # =====================================================================
 HF_TOKEN = os.environ.get("HF_TOKEN", "")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+SARVAM_API_KEY = os.environ.get("SARVAM_API_KEY", "")
 ELEVENLABS_API_KEY = os.environ.get("ELEVENLABS_API_KEY", "")
 CREATOMATE_API_KEY = os.environ.get("CREATOMATE_API_KEY", "")
 APP_PASSCODE = os.environ.get("APP_PASSCODE", "")
@@ -24,6 +25,7 @@ RENDER_ENGINE = os.environ.get("RENDER_ENGINE", "LOCAL").upper()
 
 MAX_DAILY_GREETINGS = int(os.environ.get("MAX_DAILY_GREETINGS", 3))
 GEMINI_MODEL = "gemini-2.5-flash"
+SARVAM_MODEL = os.environ.get("SARVAM_MODEL", "bulbul:v3")
 ELEVENLABS_MODEL = os.environ.get("ELEVENLABS_MODEL", "eleven_multilingual_v2")
 
 # =====================================================================
@@ -53,47 +55,55 @@ BGM_VOLUME_NO_TTS = "75%"      # For Creatomate mode
 TTS_VOLUME_BOOST = "165%"      # For Creatomate mode
 
 # =====================================================================
-# 4. CULTURAL + GENDER VOICE ROUTING (INDIAN VS. GLOBAL)
+# 4. 3-TIER VOICE WATERFALL (SARVAM -> AZURE NEURAL -> ELEVENLABS)
 # =====================================================================
-VOICE_IDS = {
-    "indian_female": "EQajdcMa8fccc3KCqwGO",  # Vanishree (Indian English Female)
-    "indian_male": "0muxiGNHAVvmM1qWRtyV",    # Sid (Indian English Male)
-    "global_female": "XrExE9yKIg1WjnnlVkGX",  # Matilda (Global English Female)
-    "global_male": "bIHbv24MWmeRgasZH58o"     # Will (Global English Male)
+# Tier 1 (Indian Primary): Sarvam AI bulbul:v3 speakers (must be lowercase)
+SARVAM_VOICES = {
+    "female": ["ritu", "priya", "shruti"],
+    "male": ["shubh", "aditya", "rahul"]
 }
 
-def resolve_voice_id(
+# Tier 2 (Fallback): Microsoft Azure Neural TTS (edge-tts)
+AZURE_NEURAL_VOICES = {
+    "female": "en-IN-NeerjaExpressiveNeural",
+    "male": "en-IN-PrabhatNeural"
+}
+
+# Tier 3 (Global Primary & Final Fallback): ElevenLabs Free-Tier Premade Voices
+ELEVENLABS_VOICES = {
+    "female": "XrExE9yKIg1WjnnlVkGX",  # Matilda
+    "male": "bIHbv24MWmeRgasZH58o"     # Will
+}
+
+def resolve_voice_plan(
     voice_option: str,
     ai_archetype: str,
-    cultural_context: str = "global"
-) -> str:
+    cultural_context: str = "indian"
+) -> list[dict]:
     """
-    Routes voice selection across Indian (Vanishree/Sid) and Global (Matilda/Will) accents
-    based on user dropdown choice ('Auto - AI Choice', 'Female', 'Male') and AI context.
+    Builds the ordered 3-tier TTS waterfall plan:
+    - Indian context: 1. Sarvam AI -> 2. Azure Neural (Neerja/Prabhat) -> 3. ElevenLabs (Matilda/Will)
+    - Global context: 1. ElevenLabs (Matilda/Will) -> 2. Azure Neural (Neerja/Prabhat) -> 3. Sarvam AI
     """
     choice = (voice_option or "Auto - AI Choice").strip().lower()
-    culture = (cultural_context or "global").strip().lower()
+    culture = (cultural_context or "indian").strip().lower()
     archetype = (ai_archetype or "warm_female").strip().lower()
 
-    is_indian = (culture == "indian")
-
-    # Explicit Gender Override from UI Dropdown
     if choice == "female":
-        return VOICE_IDS["indian_female"] if is_indian else VOICE_IDS["global_female"]
-    if choice == "male":
-        return VOICE_IDS["indian_male"] if is_indian else VOICE_IDS["global_male"]
+        gender = "female"
+    elif choice == "male":
+        gender = "male"
+    else:
+        is_male_arch = any(k in archetype for k in ("male", "deep_celebratory"))
+        gender = "male" if is_male_arch else "female"
 
-    # Auto - AI Choice: Infer gender from AI Director's voice_archetype
-    is_male_archetype = any(k in archetype for k in ("male", "deep_celebratory"))
-    if is_male_archetype:
-        return VOICE_IDS["indian_male"] if is_indian else VOICE_IDS["global_male"]
-    return VOICE_IDS["indian_female"] if is_indian else VOICE_IDS["global_female"]
+    sarvam_step = {"provider": "sarvam", "voice": random.choice(SARVAM_VOICES[gender])}
+    azure_step = {"provider": "azure", "voice": AZURE_NEURAL_VOICES[gender]}
+    eleven_step = {"provider": "elevenlabs", "voice": ELEVENLABS_VOICES[gender]}
 
-def get_fallback_voice_id(failed_voice_id: str) -> str:
-    """If an Indian community voice hits a free-tier restriction, fall back to same-gender Global premade voice."""
-    if failed_voice_id == VOICE_IDS["indian_male"]:
-        return VOICE_IDS["global_male"]
-    return VOICE_IDS["global_female"]
+    if culture == "global":
+        return [eleven_step, azure_step, sarvam_step]
+    return [sarvam_step, azure_step, eleven_step]
 
 # =====================================================================
 # 5. EXPANDABLE BGM LIBRARY
