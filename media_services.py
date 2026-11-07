@@ -30,13 +30,33 @@ def save_and_optionally_upload_image(image: Image.Image, need_remote_url: bool =
     public_url = upload_bytes_to_uguu(png_bytes, "artwork.png", "image/png") if need_remote_url else ""
     return local_img_path, public_url
 
+def _request_elevenlabs_tts(tts_script: str, voice_id: str) -> requests.Response:
+    url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}"
+    headers = {
+        "xi-api-key": config.ELEVENLABS_API_KEY,
+        "Content-Type": "application/json",
+        "Accept": "audio/mpeg"
+    }
+    payload = {
+        "text": tts_script,
+        "model_id": config.ELEVENLABS_MODEL,
+        "voice_settings": {
+            "stability": 0.45,
+            "similarity_boost": 0.80,
+            "style": 0.35,
+            "use_speaker_boost": True
+        }
+    }
+    return requests.post(url, json=payload, headers=headers, timeout=60)
+
 def synthesize_voiceover(
     tts_script: str,
     voice_id: str,
     need_remote_url: bool = True
 ) -> tuple[str, str, float]:
     """
-    Synthesizes speech via ElevenLabs.
+    Synthesizes speech via ElevenLabs. Automatically falls back to Global premade voice
+    if a community voice ID hits a Free-Tier API restriction.
     Returns (local_mp3_path, public_audio_url, duration_seconds).
     """
     clean_script = (tts_script or "").strip()
@@ -46,24 +66,15 @@ def synthesize_voiceover(
     if not config.ELEVENLABS_API_KEY:
         raise ValueError("Missing ELEVENLABS_API_KEY in Hugging Face Space Secrets.")
 
-    url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}"
-    headers = {
-        "xi-api-key": config.ELEVENLABS_API_KEY,
-        "Content-Type": "application/json",
-        "Accept": "audio/mpeg"
-    }
-    payload = {
-        "text": clean_script,
-        "model_id": config.ELEVENLABS_MODEL,
-        "voice_settings": {
-            "stability": 0.45,
-            "similarity_boost": 0.80,
-            "style": 0.35,
-            "use_speaker_boost": True
-        }
-    }
+    response = _request_elevenlabs_tts(clean_script, voice_id)
 
-    response = requests.post(url, json=payload, headers=headers, timeout=60)
+    # Automatic fallback if community voice (Vanishree/Sid) is restricted on Free-Tier API
+    if response.status_code != 200:
+        fallback_id = config.get_fallback_voice_id(voice_id)
+        if fallback_id != voice_id:
+            print(f"[ElevenLabs] Voice {voice_id} returned {response.status_code}. Falling back to {fallback_id}...")
+            response = _request_elevenlabs_tts(clean_script, fallback_id)
+
     if response.status_code != 200:
         raise RuntimeError(f"ElevenLabs API Error ({response.status_code}): {response.text}")
 
