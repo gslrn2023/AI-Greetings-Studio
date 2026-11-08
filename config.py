@@ -158,12 +158,15 @@ def pick_bgm_url(mood: str) -> str:
 # 6. MOBILE-FRIENDLY VISUAL ART STYLE MAP
 # =====================================================================
 STYLE_MAP = {
-    "35mm Analog": "35mm Analog Editorial Photography (Kodak Portra 400 grain, golden-hour rim light, shallow depth of field, rich environmental storytelling)",
-    "Cinematic": "Cinematic National Geographic Expedition Photography (dramatic landscape vista, warm lantern or fire glow contrasting against twilight sky)",
-    "Luminous Gouache": "Luminous Gouache & Botanical Illustration (hand-painted scenery, layered foreground flora, cold-press paper texture, warm metallic highlights)",
-    "Magical Realism": "Atmospheric Magical Realism (bioluminescent floating embers and fireflies, volumetric god-rays, dreamy cinematic color grading)",
-    "Luxury Still-Life": "Luxury Editorial Still-Life & Scenic Architecture (artisanal crafted objects set inside a breathtaking scenic veranda or mountain lodge)",
-    "Oil Impasto": "Masterpiece Oil Impasto Painting (expressive textured brushwork, dramatic warm chiaroscuro lighting, museum-grade color harmony)"
+    "Cinematic": "Cinematic National Geographic Expedition Photography (dramatic wide landscape vista, warm golden-hour rim light and lantern glow contrasting against a deep twilight sky, high dynamic range)",
+    "Movie Still": "35mm Anamorphic Hollywood Movie Still (IMAX theatrical color grading, dramatic key and volumetric rim lighting, shallow depth of field, subtle anamorphic lens flare, narrative cinematic staging)",
+    "Bokeh & Light Trails": "Dreamy f/1.2 Optical Bokeh & Long-Exposure Photography (tack-sharp foreground subject, creamy circular background bokeh orbs, silky long-exposure light trails, glowing floating embers, rich night ambiance)",
+    "Oil Painting": "Masterpiece Oil Impasto Painting (thick expressive palette-knife and bristle brushwork, rich canvas texture, dramatic warm chiaroscuro lighting, museum-grade fine art color harmony)",
+    "Sci-Fi Futuristic": "Cinematic Sci-Fi & Futuristic Concept Art (sleek futuristic architecture, holographic light accents, bioluminescent neon-cyan and warm amber reflections, atmospheric volumetric fog, ultra-detailed cyber-organic textures)",
+    "35mm Analog": "35mm Analog Editorial Photography (Kodak Portra 400 film grain, warm golden-hour sunlight, f/1.4 shallow depth of field, authentic tactile storytelling)",
+    "Luminous Gouache": "Luminous Gouache & Botanical Illustration (hand-painted matte gouache layers, intricate foreground flora, cold-press watercolor paper grain, warm metallic gold-leaf highlights)",
+    "Magical Realism": "Atmospheric Magical Realism (bioluminescent floating embers and fireflies, ethereal volumetric god-rays, enchanted natural scenery, dreamy cinematic color grading)",
+    "Luxury Still-Life": "Luxury Editorial Still-Life & Scenic Architecture (artisanal crafted objects set on a textured stone or wood table inside a breathtaking open veranda overlooking a scenic vista)"
 }
 
 CREATIVE_STYLE_LENSES = list(STYLE_MAP.values())
