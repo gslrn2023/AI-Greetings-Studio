@@ -17,10 +17,7 @@ APP_PASSCODE = os.environ.get("APP_PASSCODE", "")
 # =====================================================================
 # 2. MASTER MODULAR SWITCHBOARD
 # =====================================================================
-# IMAGE_ENGINE: "FLUX" (black-forest-labs/FLUX.1-schnell) | "Z_IMAGE" (Tongyi-MAI/Z-Image-Turbo)
 IMAGE_ENGINE = os.environ.get("IMAGE_ENGINE", "FLUX").upper()
-
-# RENDER_ENGINE: "LOCAL" (Free Python FFmpeg+Pillow) | "CREATOMATE" (Cloud API) | "OFF" (URL Test Mode)
 RENDER_ENGINE = os.environ.get("RENDER_ENGINE", "LOCAL").upper()
 
 MAX_DAILY_GREETINGS = int(os.environ.get("MAX_DAILY_GREETINGS", 3))
@@ -40,36 +37,42 @@ VIDEO_WIDTH = 1088
 VIDEO_HEIGHT = 1920
 VIDEO_FPS = 30
 
-TEXT_REVEAL_DELAY = 4.0        # First 4 seconds show 100% pure artwork without text overlay
-AUDIO_PADDING_SECONDS = 2.0    # Tail buffer after voiceover completes
-DEFAULT_NO_TTS_DURATION = 9.0  # Total duration when voiceover is muted
+TEXT_REVEAL_DELAY = 4.0
+AUDIO_PADDING_SECONDS = 2.0
+DEFAULT_NO_TTS_DURATION = 9.0
 
-# Audio Mixing (Used by both Local FFmpeg and Creatomate)
-BGM_INTRO_VOLUME = 0.36        # 28% BGM volume during the first 4.0s visual intro
-BGM_DUCKED_VOLUME = 0.18       # 14% BGM volume once voiceover starts speaking
-BGM_NO_TTS_VOLUME = 0.80       # 75% BGM volume when voiceover is muted
-TTS_VOLUME_MULTIPLIER = 1.90   # 185% Voiceover volume boost (paired with broadcast limiter)
+BGM_INTRO_VOLUME = 0.28
+BGM_DUCKED_VOLUME = 0.14
+BGM_NO_TTS_VOLUME = 0.75
+TTS_VOLUME_MULTIPLIER = 1.85
 
-BGM_VOLUME_WITH_TTS = "20%"    # For Creatomate mode
-BGM_VOLUME_NO_TTS = "75%"      # For Creatomate mode
-TTS_VOLUME_BOOST = "175%"      # For Creatomate mode
+BGM_VOLUME_WITH_TTS = "14%"
+BGM_VOLUME_NO_TTS = "75%"
+TTS_VOLUME_BOOST = "165%"
 
 # =====================================================================
-# 4. 3-TIER VOICE WATERFALL (SARVAM -> AZURE NEURAL -> ELEVENLABS)
+# 4. MULTILINGUAL 3-TIER VOICE WATERFALL (SARVAM -> AZURE -> ELEVENLABS)
 # =====================================================================
-# Tier 1 (Indian Primary): Sarvam AI bulbul:v3 speakers (must be lowercase)
 SARVAM_VOICES = {
     "female": ["ritu", "priya", "shruti"],
     "male": ["shubh", "aditya", "rahul"]
 }
 
-# Tier 2 (Fallback): Microsoft Azure Neural TTS (edge-tts)
-AZURE_NEURAL_VOICES = {
-    "female": "en-IN-NeerjaExpressiveNeural",
-    "male": "en-IN-PrabhatNeural"
+# Regional Azure Neural TTS Voices (Tier-2 Fallback for all 11 Indian languages)
+AZURE_REGIONAL_VOICES = {
+    "en-IN": {"female": "en-IN-NeerjaExpressiveNeural", "male": "en-IN-PrabhatNeural"},
+    "hi-IN": {"female": "hi-IN-SwaraNeural", "male": "hi-IN-MadhurNeural"},
+    "ta-IN": {"female": "ta-IN-PallaviNeural", "male": "ta-IN-ValluvarNeural"},
+    "te-IN": {"female": "te-IN-ShrutiNeural", "male": "te-IN-MohanNeural"},
+    "kn-IN": {"female": "kn-IN-SapnaNeural", "male": "kn-IN-GaganNeural"},
+    "ml-IN": {"female": "ml-IN-SobhanaNeural", "male": "ml-IN-MidhunNeural"},
+    "bn-IN": {"female": "bn-IN-TanishaaNeural", "male": "bn-IN-BashkarNeural"},
+    "mr-IN": {"female": "mr-IN-AarohiNeural", "male": "mr-IN-ManoharNeural"},
+    "gu-IN": {"female": "gu-IN-DhwaniNeural", "male": "gu-IN-NiranjanNeural"},
+    "pa-IN": {"female": "pa-IN-GurpreetNeural", "male": "pa-IN-OjasNeural"},
+    "od-IN": {"female": "or-IN-SubhasiniNeural", "male": "or-IN-SukantNeural"}
 }
 
-# Tier 3 (Global Primary & Final Fallback): ElevenLabs Free-Tier Premade Voices
 ELEVENLABS_VOICES = {
     "female": "XrExE9yKIg1WjnnlVkGX",  # Matilda
     "male": "bIHbv24MWmeRgasZH58o"     # Will
@@ -78,16 +81,20 @@ ELEVENLABS_VOICES = {
 def resolve_voice_plan(
     voice_option: str,
     ai_archetype: str,
-    cultural_context: str = "indian"
+    cultural_context: str = "indian",
+    tts_language_code: str = "en-IN"
 ) -> list[dict]:
     """
-    Builds the ordered 3-tier TTS waterfall plan:
-    - Indian context: 1. Sarvam AI -> 2. Azure Neural (Neerja/Prabhat) -> 3. ElevenLabs (Matilda/Will)
-    - Global context: 1. ElevenLabs (Matilda/Will) -> 2. Azure Neural (Neerja/Prabhat) -> 3. Sarvam AI
+    Builds the ordered 3-tier TTS waterfall plan with full regional language support:
+    - Indian context / Any Indian language: 1. Sarvam AI -> 2. Azure Regional Neural -> 3. ElevenLabs
+    - Global English context: 1. ElevenLabs -> 2. Azure Neural -> 3. Sarvam AI
     """
     choice = (voice_option or "Auto - AI Choice").strip().lower()
     culture = (cultural_context or "indian").strip().lower()
     archetype = (ai_archetype or "warm_female").strip().lower()
+    lang_code = (tts_language_code or "en-IN").strip()
+    if lang_code not in AZURE_REGIONAL_VOICES:
+        lang_code = "en-IN"
 
     if choice == "female":
         gender = "female"
@@ -97,13 +104,26 @@ def resolve_voice_plan(
         is_male_arch = any(k in archetype for k in ("male", "deep_celebratory"))
         gender = "male" if is_male_arch else "female"
 
-    sarvam_step = {"provider": "sarvam", "voice": random.choice(SARVAM_VOICES[gender])}
-    azure_step = {"provider": "azure", "voice": AZURE_NEURAL_VOICES[gender]}
-    eleven_step = {"provider": "elevenlabs", "voice": ELEVENLABS_VOICES[gender]}
+    sarvam_step = {
+        "provider": "sarvam",
+        "voice": random.choice(SARVAM_VOICES[gender]),
+        "lang_code": lang_code
+    }
+    azure_step = {
+        "provider": "azure",
+        "voice": AZURE_REGIONAL_VOICES[lang_code][gender],
+        "lang_code": lang_code
+    }
+    eleven_step = {
+        "provider": "elevenlabs",
+        "voice": ELEVENLABS_VOICES[gender],
+        "lang_code": lang_code
+    }
 
-    if culture == "global":
-        return [eleven_step, azure_step, sarvam_step]
-    return [sarvam_step, azure_step, eleven_step]
+    # If a regional Indian language is used, always prioritize Sarvam -> Azure Regional
+    if lang_code != "en-IN" or culture == "indian":
+        return [sarvam_step, azure_step, eleven_step]
+    return [eleven_step, azure_step, sarvam_step]
 
 # =====================================================================
 # 5. EXPANDABLE BGM LIBRARY
@@ -111,27 +131,13 @@ def resolve_voice_plan(
 BGM_BASE_URL = "https://raw.githubusercontent.com/gslrn2023/Greetings-Bgms/main/"
 
 BGM_LIBRARY = {
-    "festive": [
-        f"{BGM_BASE_URL}festive.mp3",
-    ],
-    "calm": [
-        f"{BGM_BASE_URL}calm.mp3",
-    ],
-    "energetic": [
-        f"{BGM_BASE_URL}energetic.mp3",
-    ],
-    "elegant": [
-        f"{BGM_BASE_URL}elegant.mp3",
-    ],
-    "sad": [
-        f"{BGM_BASE_URL}sad.mp3",
-    ],
-    "spiritual": [
-        f"{BGM_BASE_URL}calm.mp3",
-    ],
-    "romantic": [
-        f"{BGM_BASE_URL}elegant.mp3",
-    ]
+    "festive": [f"{BGM_BASE_URL}festive.mp3"],
+    "calm": [f"{BGM_BASE_URL}calm.mp3"],
+    "energetic": [f"{BGM_BASE_URL}energetic.mp3"],
+    "elegant": [f"{BGM_BASE_URL}elegant.mp3"],
+    "sad": [f"{BGM_BASE_URL}sad.mp3"],
+    "spiritual": [f"{BGM_BASE_URL}calm.mp3"],
+    "romantic": [f"{BGM_BASE_URL}elegant.mp3"]
 }
 
 def pick_bgm_url(mood: str) -> str:
