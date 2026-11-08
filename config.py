@@ -53,10 +53,18 @@ TTS_VOLUME_BOOST = "165%"
 # =====================================================================
 # 4. MULTILINGUAL 3-TIER VOICE WATERFALL (SARVAM -> AZURE -> ELEVENLABS)
 # =====================================================================
-SARVAM_VOICES = {
+SARVAM_VOICES_GENERAL = {
     "female": ["ritu", "priya", "shruti"],
     "male": ["shubh", "aditya", "rahul"]
 }
+
+# Speakers specifically tuned for South Indian / Dravidian cadences (ta-IN, kn-IN, te-IN, ml-IN)
+SARVAM_VOICES_SOUTH = {
+    "female": ["kavitha", "shruti"],
+    "male": ["mani", "gokul", "vijay"]
+}
+
+SOUTH_LANG_CODES = {"ta-IN", "kn-IN", "te-IN", "ml-IN"}
 
 # Regional Azure Neural TTS Voices (Tier-2 Fallback for all 11 Indian languages)
 AZURE_REGIONAL_VOICES = {
@@ -85,7 +93,7 @@ def resolve_voice_plan(
     tts_language_code: str = "en-IN"
 ) -> list[dict]:
     """
-    Builds the ordered 3-tier TTS waterfall plan with full regional language support:
+    Builds the ordered 3-tier TTS waterfall plan:
     - Indian context / Any Indian language: 1. Sarvam AI -> 2. Azure Regional Neural -> 3. ElevenLabs
     - Global English context: 1. ElevenLabs -> 2. Azure Neural -> 3. Sarvam AI
     """
@@ -104,9 +112,11 @@ def resolve_voice_plan(
         is_male_arch = any(k in archetype for k in ("male", "deep_celebratory"))
         gender = "male" if is_male_arch else "female"
 
+    sarvam_pool = SARVAM_VOICES_SOUTH if lang_code in SOUTH_LANG_CODES else SARVAM_VOICES_GENERAL
+
     sarvam_step = {
         "provider": "sarvam",
-        "voice": random.choice(SARVAM_VOICES[gender]),
+        "voice": random.choice(sarvam_pool[gender]),
         "lang_code": lang_code
     }
     azure_step = {
@@ -120,7 +130,6 @@ def resolve_voice_plan(
         "lang_code": lang_code
     }
 
-    # If a regional Indian language is used, always prioritize Sarvam -> Azure Regional
     if lang_code != "en-IN" or culture == "indian":
         return [sarvam_step, azure_step, eleven_step]
     return [eleven_step, azure_step, sarvam_step]
