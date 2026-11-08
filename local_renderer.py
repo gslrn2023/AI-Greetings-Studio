@@ -200,7 +200,7 @@ def render_local_video(
     audio_duration: float,
     bgm_url: str
 ) -> str:
-    """Renders 1088x1920 MP4 locally via FFmpeg with diagonal camera glide, slide-up card, and boosted audio."""
+    """Renders 1088x1920 MP4 locally via FFmpeg with bright Frame-0 thumbnail and faststart metadata."""
     temp_dir = tempfile.mkdtemp()
     card_png = os.path.join(temp_dir, "card_layer.png")
     text_png = os.path.join(temp_dir, "text_layer.png")
@@ -241,10 +241,11 @@ def render_local_video(
     card_y_expr = f"if(lt(t,{card_start_t}),H,({slide_sign}120)*pow(max(0,1-(t-{card_start_t})/0.55),2))"
     text_y_expr = f"if(lt(t,{reveal_t}),H,({slide_sign}28)*pow(max(0,1-(t-{reveal_t})/0.50),2))"
 
+    # Removed fade-from-black on [bg] so Frame 0 (t=0.0s) is 100% vibrant for WhatsApp/social thumbnails
     v_filter = (
         f"[0:v]scale=1360:2400,zoompan=z='min(zoom+0.00055,1.16)':"
         f"x='{x_expr}':y='{y_expr}':d={total_frames}:s=1088x1920:fps={config.VIDEO_FPS},"
-        f"eq=saturation=1.06:contrast=1.03,fade=t=in:st=0:d=0.8[bg];"
+        f"eq=saturation=1.06:contrast=1.03[bg];"
         f"[1:v]format=rgba,fade=t=in:st={card_start_t}:d=0.45:alpha=1[card];"
         f"[2:v]format=rgba,fade=t=in:st={reveal_t}:d=0.45:alpha=1[txt];"
         f"[bg][card]overlay=x=0:y='{card_y_expr}':shortest=1[bg_card];"
@@ -276,6 +277,7 @@ def render_local_video(
             "-map", "[vout]", "-map", "[aout]",
             "-c:v", "libx264", "-preset", "superfast", "-crf", "18",
             "-c:a", "aac", "-b:a", "192k",
+            "-movflags", "+faststart",
             "-shortest", out_mp4
         ]
     else:
@@ -293,6 +295,7 @@ def render_local_video(
             "-map", "[vout]", "-map", "[aout]",
             "-c:v", "libx264", "-preset", "superfast", "-crf", "18",
             "-c:a", "aac", "-b:a", "192k",
+            "-movflags", "+faststart",
             "-shortest", out_mp4
         ]
 
