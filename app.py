@@ -49,7 +49,9 @@ def run_pipeline(
         tts_script = blueprint["audio_prompt"].get("tts_script", "")
         ai_archetype = blueprint["audio_prompt"].get("voice_archetype", "warm_female")
         bgm_mood = blueprint["audio_prompt"].get("bgm_mood", "festive")
-        cultural_context = blueprint.get("context_analysis", {}).get("cultural_context", "global")
+        ctx_analysis = blueprint.get("context_analysis", {})
+        cultural_context = ctx_analysis.get("cultural_context", "global")
+        tts_lang_code = ctx_analysis.get("tts_language_code", "en-IN")
         bgm_url = config.pick_bgm_url(bgm_mood)
 
         # Step 2: Image Generation
@@ -57,9 +59,9 @@ def run_pipeline(
         pil_img = generate_artwork(img_prompt)
         local_img_path, image_url = save_and_optionally_upload_image(pil_img, need_remote_url=need_uguu)
 
-        # Step 3: Voiceover Synthesis (Routes Indian context to Vanishree/Sid, Global to Matilda/Will)
+        # Step 3: Voiceover Synthesis
         if tts_script and ai_archetype != "none":
-            voice_plan = config.resolve_voice_plan(voice_override, ai_archetype, cultural_context)
+            voice_plan = config.resolve_voice_plan(voice_override, ai_archetype, cultural_context, tts_lang_code)
             progress(0.68, desc="Step 3/4: Synthesizing voiceover...")
             local_tts_path, audio_url, audio_dur = synthesize_voiceover(tts_script, voice_plan, need_remote_url=need_uguu)
         else:
