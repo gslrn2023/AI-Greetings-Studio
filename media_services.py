@@ -35,15 +35,18 @@ def save_and_optionally_upload_image(image: Image.Image, need_remote_url: bool =
     public_url = upload_bytes_to_uguu(png_bytes, "artwork.png", "image/png") if need_remote_url else ""
     return local_img_path, public_url
 
-
 # =====================================================================
 # SECTION 2: TIER 1 ENGINE - SARVAM AI (BULBUL:V3 MULTILINGUAL INDIAN TTS)
 # =====================================================================
 def _tts_sarvam(tts_script: str, speaker: str, lang_code: str, out_mp3_path: str) -> bool:
-    """Calls Sarvam AI bulbul:v3 REST API with dynamic target_language_code and writes MP3 bytes."""
+    """Calls Sarvam AI bulbul:v3 REST API with stabilized regional parameters and 48kHz audio."""
     if not config.SARVAM_API_KEY:
         print("[TTS Tier-1: Sarvam] SARVAM_API_KEY not set. Skipping to Tier-2...")
         return False
+
+    clean_lang = (lang_code or "en-IN").strip()
+    # Lower temperature (0.35) for regional scripts eliminates phoneme stutters/blips
+    dynamic_temp = 0.50 if clean_lang == "en-IN" else 0.35
 
     url = "https://api.sarvam.ai/text-to-speech"
     headers = {
@@ -52,12 +55,12 @@ def _tts_sarvam(tts_script: str, speaker: str, lang_code: str, out_mp3_path: str
     }
     payload = {
         "text": tts_script,
-        "target_language_code": lang_code or "en-IN",
+        "target_language_code": clean_lang,
         "speaker": speaker.lower(),
         "model": config.SARVAM_MODEL,
-        "pace": 0.95,
-        "temperature": 0.65,
-        "speech_sample_rate": 24000,
+        "pace": 1.1,
+        "temperature": dynamic_temp,
+        "speech_sample_rate": 48000,
         "output_audio_codec": "mp3"
     }
 
@@ -75,12 +78,11 @@ def _tts_sarvam(tts_script: str, speaker: str, lang_code: str, out_mp3_path: str
         audio_bytes = base64.b64decode(audios[0])
         with open(out_mp3_path, "wb") as f:
             f.write(audio_bytes)
-        print(f"[TTS Tier-1: Sarvam] Success: speaker='{speaker}', lang='{lang_code}'.")
+        print(f"[TTS Tier-1: Sarvam] Success: speaker='{speaker}', lang='{clean_lang}', temp={dynamic_temp}, pace=1.1.")
         return True
     except Exception as e:
         print(f"[TTS Tier-1: Sarvam] Exception: {e}")
         return False
-
 
 # =====================================================================
 # SECTION 3: TIER 2 ENGINE - AZURE NEURAL TTS (EDGE-TTS REGIONAL FALLBACK)
