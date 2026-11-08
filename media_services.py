@@ -37,10 +37,10 @@ def save_and_optionally_upload_image(image: Image.Image, need_remote_url: bool =
 
 
 # =====================================================================
-# SECTION 2: TIER 1 ENGINE - SARVAM AI (BULBUL:V3 INDIAN ACCENT TTS)
+# SECTION 2: TIER 1 ENGINE - SARVAM AI (BULBUL:V3 MULTILINGUAL INDIAN TTS)
 # =====================================================================
-def _tts_sarvam(tts_script: str, speaker: str, out_mp3_path: str) -> bool:
-    """Calls Sarvam AI bulbul:v3 REST API and writes MP3 bytes to out_mp3_path."""
+def _tts_sarvam(tts_script: str, speaker: str, lang_code: str, out_mp3_path: str) -> bool:
+    """Calls Sarvam AI bulbul:v3 REST API with dynamic target_language_code and writes MP3 bytes."""
     if not config.SARVAM_API_KEY:
         print("[TTS Tier-1: Sarvam] SARVAM_API_KEY not set. Skipping to Tier-2...")
         return False
@@ -52,10 +52,10 @@ def _tts_sarvam(tts_script: str, speaker: str, out_mp3_path: str) -> bool:
     }
     payload = {
         "text": tts_script,
-        "target_language_code": "en-IN",
+        "target_language_code": lang_code or "en-IN",
         "speaker": speaker.lower(),
         "model": config.SARVAM_MODEL,
-        "pace": 0.96,
+        "pace": 0.95,
         "temperature": 0.65,
         "speech_sample_rate": 24000,
         "output_audio_codec": "mp3"
@@ -75,7 +75,7 @@ def _tts_sarvam(tts_script: str, speaker: str, out_mp3_path: str) -> bool:
         audio_bytes = base64.b64decode(audios[0])
         with open(out_mp3_path, "wb") as f:
             f.write(audio_bytes)
-        print(f"[TTS Tier-1: Sarvam] Success with speaker='{speaker}'.")
+        print(f"[TTS Tier-1: Sarvam] Success: speaker='{speaker}', lang='{lang_code}'.")
         return True
     except Exception as e:
         print(f"[TTS Tier-1: Sarvam] Exception: {e}")
@@ -83,10 +83,10 @@ def _tts_sarvam(tts_script: str, speaker: str, out_mp3_path: str) -> bool:
 
 
 # =====================================================================
-# SECTION 3: TIER 2 ENGINE - AZURE NEURAL TTS (EDGE-TTS FALLBACK)
+# SECTION 3: TIER 2 ENGINE - AZURE NEURAL TTS (EDGE-TTS REGIONAL FALLBACK)
 # =====================================================================
 def _tts_azure_edge(tts_script: str, edge_voice: str, out_mp3_path: str) -> bool:
-    """Synthesizes speech using Microsoft Azure Neural TTS (edge-tts CLI)."""
+    """Synthesizes speech using Microsoft Azure Neural TTS (supports all Indian languages)."""
     try:
         cmd = [
             "edge-tts",
@@ -155,7 +155,7 @@ def synthesize_voiceover(
     need_remote_url: bool = True
 ) -> tuple[str, str, float]:
     """
-    Executes the ordered 3-tier voice_plan (Sarvam -> Azure Neural -> ElevenLabs).
+    Executes the ordered 3-tier voice_plan (Sarvam -> Azure Regional -> ElevenLabs).
     Returns (local_mp3_path, public_audio_url, duration_seconds).
     """
     clean_script = (tts_script or "").strip()
@@ -169,9 +169,10 @@ def synthesize_voiceover(
     for step in voice_plan:
         provider = step.get("provider")
         voice = step.get("voice")
+        lang_code = step.get("lang_code", "en-IN")
 
         if provider == "sarvam":
-            synthesized = _tts_sarvam(clean_script, voice, local_mp3_path)
+            synthesized = _tts_sarvam(clean_script, voice, lang_code, local_mp3_path)
         elif provider == "azure":
             synthesized = _tts_azure_edge(clean_script, voice, local_mp3_path)
         elif provider == "elevenlabs":
