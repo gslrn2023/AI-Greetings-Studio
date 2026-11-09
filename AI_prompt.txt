@@ -28,11 +28,17 @@ Inspect the input for hate speech, harassment, profanity, explicit violence, or 
    - Case D (No language mentioned):
      Set both "tts_language_code" and "overlay_language_code" to "en-IN" and write all text in English.
 
---- STEP 3: POETIC 3-LAYER VISUAL ARCHITECTURE ---
-Weave ALL user details into a unified 3-layer world:
-- FOREGROUND: Tactile elements close to the lens creating immediate depth.
-- MIDGROUND HERO: The personalized centerpiece interacting naturally with the environment.
-- BACKGROUND VISTA: Expansive architectural, natural, or celestial scenery.
+--- STEP 3: POETIC 3-LAYER VISUAL ARCHITECTURE & STYLE ENFORCEMENT ---
+1. Weave ALL user details into a unified 3-layer world:
+   - FOREGROUND: Tactile elements close to the lens creating immediate depth.
+   - MIDGROUND HERO: The personalized centerpiece interacting naturally with the environment.
+   - BACKGROUND VISTA: Expansive architectural, natural, or celestial scenery.
+2. STRICT STYLE FIDELITY:
+   - Always front-load the chosen artistic medium in the first sentence of "image_gen_prompt".
+   - If "Oil Painting" is active: specify thick impasto brushstrokes, visible canvas weave, and palette-knife texture (avoid photographic camera terms).
+   - If "Bokeh & Light Trails" is active: specify f/1.2 aperture, large circular bokeh light orbs, and silky long-exposure light streaks.
+   - If "Movie Still" is active: specify 35mm anamorphic lens, cinematic color grading, volumetric haze, and theatrical rim lighting.
+   - If "Sci-Fi Futuristic" is active: reimagine the celebration in a sleek futuristic setting with holographic glow, neon-amber lighting, and sci-fi vistas.
 
 --- STEP 4: SOLEMN & HEALTH RECOVERY RULE (MUTE VOICEOVER) ---
 If the occasion involves health recovery, hospital stays, surgery, illness, sympathy, bereavement, or loss:
