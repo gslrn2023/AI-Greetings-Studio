@@ -135,24 +135,91 @@ def resolve_voice_plan(
     return [eleven_step, azure_step, sarvam_step]
 
 # =====================================================================
-# 5. EXPANDABLE BGM LIBRARY
+# 5. EXPANDABLE BGM LIBRARY (WITH ANTI-REPEAT & LIVE 404 SAFEGUARD)
 # =====================================================================
+import requests  # (Can stay here or at the top of config.py)
+
 BGM_BASE_URL = "https://raw.githubusercontent.com/gslrn2023/Greetings-Bgms/main/"
 
 BGM_LIBRARY = {
-    "festive": [f"{BGM_BASE_URL}festive.mp3"],
-    "calm": [f"{BGM_BASE_URL}calm.mp3"],
-    "energetic": [f"{BGM_BASE_URL}energetic.mp3"],
-    "elegant": [f"{BGM_BASE_URL}elegant.mp3"],
-    "sad": [f"{BGM_BASE_URL}sad.mp3"],
-    "spiritual": [f"{BGM_BASE_URL}calm.mp3"],
-    "romantic": [f"{BGM_BASE_URL}elegant.mp3"]
+    "festive": [
+        f"{BGM_BASE_URL}festive1.mp3",
+        f"{BGM_BASE_URL}festive2.mp3",
+        f"{BGM_BASE_URL}festive3.mp3",
+        f"{BGM_BASE_URL}festive.mp3",
+    ],
+    "calm": [
+        f"{BGM_BASE_URL}calm1.mp3",
+        f"{BGM_BASE_URL}calm2.mp3",
+        f"{BGM_BASE_URL}calm3.mp3",
+        f"{BGM_BASE_URL}calm.mp3",
+    ],
+    "energetic": [
+        f"{BGM_BASE_URL}energetic1.mp3",
+        f"{BGM_BASE_URL}energetic2.mp3",
+        f"{BGM_BASE_URL}energetic3.mp3",
+        f"{BGM_BASE_URL}energetic.mp3",
+    ],
+    "elegant": [
+        f"{BGM_BASE_URL}elegant1.mp3",
+        f"{BGM_BASE_URL}elegant2.mp3",
+        f"{BGM_BASE_URL}elegant3.mp3",
+        f"{BGM_BASE_URL}elegant.mp3",
+    ],
+    "spiritual": [
+        f"{BGM_BASE_URL}spiritual1.mp3",
+        f"{BGM_BASE_URL}spiritual2.mp3",
+        f"{BGM_BASE_URL}spiritual3.mp3",
+        f"{BGM_BASE_URL}calm1.mp3",
+        f"{BGM_BASE_URL}calm.mp3",
+    ],
+    "romantic": [
+        f"{BGM_BASE_URL}romantic1.mp3",
+        f"{BGM_BASE_URL}romantic2.mp3",
+        f"{BGM_BASE_URL}romantic3.mp3",
+        f"{BGM_BASE_URL}elegant1.mp3",
+        f"{BGM_BASE_URL}elegant.mp3",
+    ],
+    "sad": [
+        f"{BGM_BASE_URL}sad1.mp3",
+        f"{BGM_BASE_URL}sad2.mp3",
+        f"{BGM_BASE_URL}sad.mp3",
+    ]
 }
 
+_last_played_bgm = None
+_bgm_lock = threading.Lock()
+
 def pick_bgm_url(mood: str) -> str:
+    """
+    Randomly selects an available BGM track for the given mood, avoiding consecutive repeats
+    and skipping any numbered track URLs that have not been uploaded to GitHub yet.
+    """
+    global _last_played_bgm
     clean_mood = (mood or "festive").lower().strip()
-    track_list = BGM_LIBRARY.get(clean_mood, BGM_LIBRARY["festive"])
-    return random.choice(track_list)
+    candidates = list(BGM_LIBRARY.get(clean_mood, BGM_LIBRARY["festive"]))
+    random.shuffle(candidates)
+
+    # Move the last-played track to the end of the priority queue to avoid back-to-back repeats
+    with _bgm_lock:
+        if _last_played_bgm in candidates and len(candidates) > 1:
+            candidates.remove(_last_played_bgm)
+            candidates.append(_last_played_bgm)
+
+    for url in candidates:
+        try:
+            resp = requests.head(url, timeout=3, allow_redirects=True)
+            if resp.status_code == 200:
+                with _bgm_lock:
+                    _last_played_bgm = url
+                print(f"[BGM Selector] Mood='{clean_mood}' -> Selected: {url.split('/')[-1]}")
+                return url
+        except Exception:
+            continue
+
+    # Final fallback if HEAD checks time out
+    fallback_url = BGM_LIBRARY.get(clean_mood, BGM_LIBRARY["festive"])[-1]
+    return fallback_url
 
 # =====================================================================
 # 6. MOBILE-FRIENDLY VISUAL ART STYLE MAP
