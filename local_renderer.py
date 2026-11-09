@@ -193,6 +193,9 @@ def create_split_overlay_layers(blueprint: dict, card_png_path: str, text_png_pa
     text_canvas.save(text_png_path, format="PNG")
     return pos
 
+_last_camera_preset = None
+_last_unveil_preset = None
+
 def render_local_video(
     blueprint: dict,
     local_image_path: str,
@@ -200,7 +203,12 @@ def render_local_video(
     audio_duration: float,
     bgm_url: str
 ) -> str:
-    """Renders 1088x1920 MP4 locally via FFmpeg with bright Frame-0 thumbnail and faststart metadata."""
+    """
+    Renders 1088x1920 MP4 locally via FFmpeg with randomized smooth camera presets,
+    pleasant card unveil choreography, bright Frame-0 WhatsApp thumbnail, and faststart metadata.
+    """
+    global _last_camera_preset, _last_unveil_preset
+
     temp_dir = tempfile.mkdtemp()
     card_png = os.path.join(temp_dir, "card_layer.png")
     text_png = os.path.join(temp_dir, "text_layer.png")
@@ -228,26 +236,78 @@ def render_local_video(
     safe_slug = re.sub(r"[^a-zA-Z0-9_-]", "", raw_name.replace(" ", "_")) or "Greeting"
     out_mp4 = os.path.join(temp_dir, f"Greeting_{safe_slug}.mp4")
 
-    pan_directions = [
-        ("iw/2-(iw/zoom/2)+((iw-iw/zoom)*0.18*(on/{F}))", "ih/2-(ih/zoom/2)-((ih-ih/zoom)*0.15*(on/{F}))"),
-        ("iw/2-(iw/zoom/2)-((iw-iw/zoom)*0.18*(on/{F}))", "ih/2-(ih/zoom/2)-((ih-ih/zoom)*0.15*(on/{F}))"),
-        ("iw/2-(iw/zoom/2)", "ih/2-(ih/zoom/2)-((ih-ih/zoom)*0.22*(on/{F}))")
-    ]
-    x_expr_tpl, y_expr_tpl = random.choice(pan_directions)
-    x_expr = x_expr_tpl.format(F=total_frames)
-    y_expr = y_expr_tpl.format(F=total_frames)
+    # -----------------------------------------------------------------
+    # 1. RANDOMIZED SMOOTH CAMERA & ATMOSPHERE PRESET (WITH ANTI-REPEAT)
+    # -----------------------------------------------------------------
+    camera_choices = ["slow_push_in", "slow_pull_back", "horizon_float_glow"]
+    available_cam = [c for c in camera_choices if c != _last_camera_preset] or camera_choices
+    cam_preset = random.choice(available_cam)
+    _last_camera_preset = cam_preset
+
+    if cam_preset == "slow_pull_back":
+        # Starts softly framed in (1.14x) and smoothly pulls back to 1.0x
+        z_expr = "if(eq(on,1),1.14,max(zoom-0.00045,1.0))"
+        x_expr = f"iw/2-(iw/zoom/2)+((iw-iw/zoom)*0.12*(1-on/{total_frames}))"
+        y_expr = f"ih/2-(ih/zoom/2)-((ih-ih/zoom)*0.12*(1-on/{total_frames}))"
+        eq_expr = "eq=saturation=1.06:contrast=1.03"
+
+    elif cam_preset == "horizon_float_glow":
+        # Gentle horizontal drift + subtle warm luminance breathing for diyas/lights
+        z_expr = "min(zoom+0.00040,1.12)"
+        x_expr = f"iw/2-(iw/zoom/2)+((iw-iw/zoom)*0.20*(on/{total_frames}))"
+        y_expr = "ih/2-(ih/zoom/2)"
+        eq_expr = "eq=saturation=1.07:contrast=1.03:brightness='0.018*sin(2*PI*t/4.0)':eval=frame"
+
+    else:
+        # Classic slow push-in (1.0x -> 1.14x) with gentle diagonal drift
+        z_expr = "min(zoom+0.00048,1.14)"
+        pan_dirs = [
+            (f"iw/2-(iw/zoom/2)+((iw-iw/zoom)*0.16*(on/{total_frames}))", f"ih/2-(ih/zoom/2)-((ih-ih/zoom)*0.14*(on/{total_frames}))"),
+            (f"iw/2-(iw/zoom/2)-((iw-iw/zoom)*0.16*(on/{total_frames}))", f"ih/2-(ih/zoom/2)-((ih-ih/zoom)*0.14*(on/{total_frames}))")
+        ]
+        x_expr, y_expr = random.choice(pan_dirs)
+        eq_expr = "eq=saturation=1.06:contrast=1.03"
+
+    # -----------------------------------------------------------------
+    # 2. RANDOMIZED PLEASANT CARD & TEXT UNVEIL CHOREOGRAPHY
+    # -----------------------------------------------------------------
+    unveil_choices = ["soft_vertical_float", "gentle_cascade", "pure_silk_dissolve"]
+    available_unveil = [u for u in unveil_choices if u != _last_unveil_preset] or unveil_choices
+    unveil_preset = random.choice(available_unveil)
+    _last_unveil_preset = unveil_preset
 
     slide_sign = "-" if pos == "top" else "+"
-    card_y_expr = f"if(lt(t,{card_start_t}),H,({slide_sign}120)*pow(max(0,1-(t-{card_start_t})/0.55),2))"
-    text_y_expr = f"if(lt(t,{reveal_t}),H,({slide_sign}28)*pow(max(0,1-(t-{reveal_t})/0.50),2))"
 
-    # Removed fade-from-black on [bg] so Frame 0 (t=0.0s) is 100% vibrant for WhatsApp/social thumbnails
+    if unveil_preset == "gentle_cascade":
+        # Card settles softly from above (-45px -> 0) while text rises gently (+20px -> 0)
+        card_fade_d = 0.50
+        txt_fade_d = 0.50
+        card_y_expr = f"if(lt(t,{card_start_t}),H,(-45)*pow(max(0,1-(t-{card_start_t})/0.55),2))"
+        text_y_expr = f"if(lt(t,{reveal_t}),H,(+20)*pow(max(0,1-(t-{reveal_t})/0.50),2))"
+
+    elif unveil_preset == "pure_silk_dissolve":
+        # Calm editorial in-place alpha dissolve with a subtle 10px text settle
+        card_fade_d = 0.60
+        txt_fade_d = 0.60
+        card_y_expr = f"if(lt(t,{card_start_t}),H,0)"
+        text_y_expr = f"if(lt(t,{reveal_t}),H,({slide_sign}10)*pow(max(0,1-(t-{reveal_t})/0.55),2))"
+
+    else:
+        # Soft vertical float (80px card glide + 25px text glide)
+        card_fade_d = 0.45
+        txt_fade_d = 0.45
+        card_y_expr = f"if(lt(t,{card_start_t}),H,({slide_sign}80)*pow(max(0,1-(t-{card_start_t})/0.55),2))"
+        text_y_expr = f"if(lt(t,{reveal_t}),H,({slide_sign}25)*pow(max(0,1-(t-{reveal_t})/0.50),2))"
+
+    print(f"[Video Choreography] Camera='{cam_preset}' | Card Unveil='{unveil_preset}'")
+
+    # Frame 0 (t=0.0s) remains 100% bright with zero fade-from-black for WhatsApp thumbnails
     v_filter = (
-        f"[0:v]scale=1360:2400,zoompan=z='min(zoom+0.00055,1.16)':"
+        f"[0:v]scale=1360:2400,zoompan=z='{z_expr}':"
         f"x='{x_expr}':y='{y_expr}':d={total_frames}:s=1088x1920:fps={config.VIDEO_FPS},"
-        f"eq=saturation=1.06:contrast=1.03[bg];"
-        f"[1:v]format=rgba,fade=t=in:st={card_start_t}:d=0.45:alpha=1[card];"
-        f"[2:v]format=rgba,fade=t=in:st={reveal_t}:d=0.45:alpha=1[txt];"
+        f"{eq_expr}[bg];"
+        f"[1:v]format=rgba,fade=t=in:st={card_start_t}:d={card_fade_d}:alpha=1[card];"
+        f"[2:v]format=rgba,fade=t=in:st={reveal_t}:d={txt_fade_d}:alpha=1[txt];"
         f"[bg][card]overlay=x=0:y='{card_y_expr}':shortest=1[bg_card];"
         f"[bg_card][txt]overlay=x=0:y='{text_y_expr}':shortest=1,format=yuv420p[vout]"
     )
