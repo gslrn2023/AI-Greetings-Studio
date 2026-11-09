@@ -28,9 +28,13 @@ def generate_creative_blueprint(
 
     if style_override and style_override in config.STYLE_MAP:
         full_style_desc = config.STYLE_MAP[style_override]
-        style_directive = f"USER STYLE OVERRIDE: Craft the visual_prompt strictly in the '{full_style_desc}' style."
+        style_directive = (
+            f"MANDATORY VISUAL STYLE OVERRIDE: You MUST render this scene strictly in '{full_style_desc}'. "
+            f"Begin 'image_gen_prompt' with the exact medium, camera/brush physics, and lighting tokens of this style, "
+            f"and adapt all foreground, midground, and background elements to fit this aesthetic."
+        )
     else:
-        style_directive = f"CREATIVE STYLE SEED (Pick or blend the best fit):\n{lenses_text}"
+        style_directive = f"CREATIVE STYLE SEED (Pick or blend the best fit for the occasion):\n{lenses_text}"
 
     model_hint = (
         "Optimize prompt for Tongyi-MAI/Z-Image-Turbo: emphasize rich spatial hierarchy, micro-textures, and atmospheric lighting."
