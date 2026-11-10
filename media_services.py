@@ -1,5 +1,6 @@
 import io
 import os
+import re
 import base64
 import tempfile
 import subprocess
@@ -160,7 +161,7 @@ def synthesize_voiceover(
     Executes the ordered 3-tier voice_plan (Sarvam -> Azure Regional -> ElevenLabs).
     Returns (local_mp3_path, public_audio_url, duration_seconds).
     """
-    clean_script = (tts_script or "").strip()
+    clean_script = re.sub(r"[*_#`~<>]", "", (tts_script or "")).strip()
     if not clean_script or not voice_plan:
         return "", "", 0.0
 
