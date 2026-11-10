@@ -24,13 +24,18 @@ def run_pipeline(
     progress=gr.Progress()
 ):
     if not config.APP_PASSCODE or passcode.strip() != config.APP_PASSCODE:
-        raise gr.Error("🔒 Invalid Access Passcode.")
+        gr.Warning("🔒 Invalid Access Passcode.")
+        return None, gr.update(visible=False), "🔒 **Invalid Access Passcode.**", format_status_banner()
+
     if not user_prompt or len(user_prompt.strip()) < 4:
-        raise gr.Error("⚠️ Please enter a descriptive greeting request.")
+        gr.Warning("⚠️ Please enter a descriptive greeting request.")
+        return None, gr.update(visible=False), "⚠️ **Please enter a descriptive greeting request.**", format_status_banner()
 
     _, remaining = config.get_quota_status()
     if remaining <= 0:
-        raise gr.Error(f"🛑 Daily limit of {config.MAX_DAILY_GREETINGS} greetings reached.")
+        limit_msg = f"🛑 Daily limit of {config.MAX_DAILY_GREETINGS} greetings reached."
+        gr.Warning(limit_msg)
+        return None, gr.update(visible=False), f"**{limit_msg}**", format_status_banner()
 
     active_renderer = config.RENDER_ENGINE
     need_uguu = active_renderer in ("CREATOMATE", "OFF")
@@ -108,10 +113,10 @@ def run_pipeline(
             format_status_banner()
         )
 
-    except gr.Error:
-        raise
     except Exception as e:
-        raise gr.Error(f"⚠️ Pipeline Error: {str(e)}")
+        err_msg = f"⚠️ Pipeline Error: {str(e)}"
+        gr.Warning(err_msg)
+        return None, gr.update(visible=False), f"**{err_msg}**", format_status_banner()
     finally:
         # Clean up temporary artwork and voiceover folders in /tmp once render finishes
         for tmp_asset in (local_img_path, local_tts_path):
