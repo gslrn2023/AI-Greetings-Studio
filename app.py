@@ -1,5 +1,7 @@
 import os
+import json
 import shutil
+from datetime import datetime
 import gradio as gr
 import config
 from ai_director import generate_creative_blueprint
@@ -7,6 +9,23 @@ from image_gen import generate_artwork
 from media_services import save_and_optionally_upload_image, synthesize_voiceover
 from local_renderer import render_local_video
 from creatomate_renderer import render_creatomate_video
+
+EXECUTION_LOG_FILE = os.path.join(config.BASE_DIR, "execution_logs.json")
+
+def save_execution_trace(trace_entry: dict) -> None:
+    """Saves the Black Box execution trace to execution_logs.json (retains last 50 runs)."""
+    try:
+        history = []
+        if os.path.exists(EXECUTION_LOG_FILE):
+            with open(EXECUTION_LOG_FILE, "r", encoding="utf-8") as f:
+                loaded = json.load(f)
+                if isinstance(loaded, list):
+                    history = loaded
+        history.insert(0, trace_entry)
+        with open(EXECUTION_LOG_FILE, "w", encoding="utf-8") as f:
+            json.dump(history[:50], f, indent=2, ensure_ascii=False)
+    except Exception as e:
+        print(f"[Trace Logger] Warning: Could not write execution_logs.json: {e}")
 
 def format_status_banner() -> str:
     _, remaining = config.get_quota_status()
@@ -21,21 +40,22 @@ def run_pipeline(
     user_prompt: str,
     style_override: str,
     voice_override: str,
+    accent_override: str,
     progress=gr.Progress()
 ):
     if not config.APP_PASSCODE or passcode.strip() != config.APP_PASSCODE:
         gr.Warning("🔒 Invalid Access Passcode.")
-        return None, gr.update(visible=False), "🔒 **Invalid Access Passcode.**", format_status_banner()
+        return None, gr.update(visible=False), "🔒 **Invalid Access Passcode.**", format_status_banner(), {}
 
     if not user_prompt or len(user_prompt.strip()) < 4:
         gr.Warning("⚠️ Please enter a descriptive greeting request.")
-        return None, gr.update(visible=False), "⚠️ **Please enter a descriptive greeting request.**", format_status_banner()
+        return None, gr.update(visible=False), "⚠️ **Please enter a descriptive greeting request.**", format_status_banner(), {}
 
     _, remaining = config.get_quota_status()
     if remaining <= 0:
         limit_msg = f"🛑 Daily limit of {config.MAX_DAILY_GREETINGS} greetings reached."
         gr.Warning(limit_msg)
-        return None, gr.update(visible=False), f"**{limit_msg}**", format_status_banner()
+        return None, gr.update(visible=False), f"**{limit_msg}**", format_status_banner(), {}
 
     active_renderer = config.RENDER_ENGINE
     need_uguu = active_renderer in ("CREATOMATE", "OFF")
@@ -43,17 +63,32 @@ def run_pipeline(
     local_img_path = ""
     local_tts_path = ""
 
+    # Initialize Black Box Trace Record
+    trace_log = {
+        "timestamp_ist": datetime.now(config.IST).strftime("%Y-%m-%d %H:%M:%S IST"),
+        "status": "in_progress",
+        "inputs": {
+            "style_override": style_override,
+            "voice_override": voice_override,
+            "accent_override": accent_override
+        },
+        "steps": {}
+    }
+
     try:
-        # Step 1: AI Creative Director (with automatic 30s retry if Gemini is busy)
+        # Step 1: AI Creative Director
         progress(0.15, desc="Step 1/4: Designing blueprint & color harmony...")
-        blueprint = generate_creative_blueprint(
+        blueprint, director_trace = generate_creative_blueprint(
             user_prompt=user_prompt.strip(),
             style_override=style_override,
             status_callback=lambda msg: progress(0.20, desc=msg)
         )
+        trace_log["steps"]["1_ai_director"] = director_trace
 
         if not blueprint.get("is_safe", True):
-            return None, gr.update(visible=False), "⚠️ Request declined by safety check.", format_status_banner()
+            trace_log["status"] = "declined_safety"
+            save_execution_trace(trace_log)
+            return None, gr.update(visible=False), "⚠️ Request declined by safety check.", format_status_banner(), trace_log
 
         visual_block = blueprint.get("visual_prompt", {})
         audio_block = blueprint.get("audio_prompt", {})
@@ -66,59 +101,105 @@ def run_pipeline(
         tts_script = audio_block.get("tts_script", "")
         ai_archetype = audio_block.get("voice_archetype", "warm_female")
         bgm_mood = audio_block.get("bgm_mood", "festive")
-        cultural_context = ctx_analysis.get("cultural_context", "global")
+
+        # Deterministic Accent Routing from UI Dropdown ("Indian" -> Sarvam Tier 1, "Universal" -> ElevenLabs Tier 1)
+        cultural_context = "indian" if accent_override == "Indian" else "global"
         tts_lang_code = ctx_analysis.get("tts_language_code", "en-IN")
+        if cultural_context == "global" and tts_lang_code == "en-IN":
+            tts_lang_code = "en-US"
+
         bgm_url = config.pick_bgm_url(bgm_mood)
+        bgm_filename = bgm_url.split("/")[-1]
+
+        trace_log["recipient"] = ctx_analysis.get("recipient_name", "Greeting")
+        trace_log["resolved_context"] = {
+            "cultural_context": cultural_context,
+            "tts_language_code": tts_lang_code,
+            "bgm_mood": bgm_mood,
+            "bgm_track": bgm_filename
+        }
 
         # Step 2: Image Generation
         progress(0.42, desc="Step 2/4: Generating artwork ...")
         pil_img = generate_artwork(img_prompt)
         local_img_path, image_url = save_and_optionally_upload_image(pil_img, need_remote_url=need_uguu)
+        trace_log["steps"]["2_image_gen"] = {
+            "engine": config.IMAGE_ENGINE,
+            "status": "success"
+        }
 
         # Step 3: Voiceover Synthesis
         if tts_script and ai_archetype != "none":
             voice_plan = config.resolve_voice_plan(voice_override, ai_archetype, cultural_context, tts_lang_code)
             progress(0.68, desc="Step 3/4: Synthesizing voiceover...")
-            local_tts_path, audio_url, audio_dur = synthesize_voiceover(tts_script, voice_plan, need_remote_url=need_uguu)
+            local_tts_path, audio_url, audio_dur, tts_trace = synthesize_voiceover(
+                tts_script, voice_plan, need_remote_url=need_uguu
+            )
         else:
             progress(0.68, desc="Step 3/4: Synthesizing voiceover...")
             local_tts_path, audio_url, audio_dur = "", "", 0.0
+            tts_trace = {
+                "status": "muted",
+                "used_provider": "Muted",
+                "used_voice": "none",
+                "duration_sec": 0.0,
+                "waterfall_attempts": []
+            }
+        trace_log["steps"]["3_voiceover_tts"] = tts_trace
 
         # Step 4: Video Rendering
         if active_renderer == "OFF":
             progress(1.0, desc="Test Mode Complete!")
+            trace_log["steps"]["4_renderer"] = {"engine": "OFF", "status": "skipped_test_mode"}
+            trace_log["status"] = "success_test_mode"
+            save_execution_trace(trace_log)
             test_links_md = (
                 f"### 🧪 Test Mode Asset Links\n"
                 f"- 🖼️ **Image URL:** [{image_url}]({image_url})\n"
-                f"- 🎙️ **TTS Audio URL:** [{audio_url or 'Muted'}]({audio_url})\n"
-                f"- 🎵 **BGM URL:** [{bgm_url}]({bgm_url})\n"
-                f"- 🌏 **Cultural Context:** `{cultural_context}`"
+                f"- 🎙️ **TTS:** `{tts_trace['used_provider']} ({tts_trace['used_voice']})`\n"
+                f"- 🎵 **BGM:** `{bgm_filename}`"
             )
-            return None, gr.update(visible=False), test_links_md, format_status_banner()
+            return None, gr.update(visible=False), test_links_md, format_status_banner(), trace_log
 
         elif active_renderer == "CREATOMATE":
             progress(0.85, desc="Step 4/4: Rendering Greetings MP4 via Creatomate..")
             local_mp4 = render_creatomate_video(blueprint, image_url, audio_url, audio_dur, bgm_url)
+            render_trace = {"engine": "CREATOMATE", "status": "success", "bgm_track": bgm_filename}
         else:
             progress(0.85, desc="Step 4/4: Rendering Greetings MP4 ..")
-            local_mp4 = render_local_video(blueprint, local_img_path, local_tts_path, audio_dur, bgm_url)
+            local_mp4, render_trace = render_local_video(blueprint, local_img_path, local_tts_path, audio_dur, bgm_url)
+
+        trace_log["steps"]["4_renderer"] = render_trace
+        trace_log["status"] = "success"
+        save_execution_trace(trace_log)
 
         config.increment_quota()
         progress(1.0, desc="✅ Greeting Video Ready!")
 
+        # Mobile-friendly concise icon-only telemetry line
+        voice_badge = (
+            f"{tts_trace['used_provider']} ({tts_trace['used_voice']})"
+            if tts_trace["used_provider"] != "Muted"
+            else "Muted"
+        )
+        summary_line = f"✅ **Video Ready!** | 🎙️ `{voice_badge}` | 🎵 `{bgm_filename}`"
+
         return (
             local_mp4,
             gr.update(value=local_mp4, visible=True),
-            "✅ **Your personalized video greeting is ready!**",
-            format_status_banner()
+            summary_line,
+            format_status_banner(),
+            trace_log
         )
 
     except Exception as e:
         err_msg = f"⚠️ Pipeline Error: {str(e)}"
+        trace_log["status"] = "error"
+        trace_log["fatal_error"] = str(e)
+        save_execution_trace(trace_log)
         gr.Warning(err_msg)
-        return None, gr.update(visible=False), f"**{err_msg}**", format_status_banner()
+        return None, gr.update(visible=False), f"**{err_msg}**", format_status_banner(), trace_log
     finally:
-        # Clean up temporary artwork and voiceover folders in /tmp once render finishes
         for tmp_asset in (local_img_path, local_tts_path):
             if tmp_asset and os.path.exists(tmp_asset):
                 try:
@@ -128,6 +209,7 @@ def run_pipeline(
 
 STYLE_CHOICES = ["Auto - AI Choice"] + list(config.STYLE_MAP.keys())
 VOICE_CHOICES = ["Auto - AI Choice", "Female", "Male"]
+ACCENT_CHOICES = ["Indian", "Universal"]
 
 with gr.Blocks(title="AI Greetings AV Studio", theme=gr.themes.Soft()) as demo:
     gr.Markdown("# 🎬 AI Greetings AV Studio")
@@ -143,19 +225,27 @@ with gr.Blocks(title="AI Greetings AV Studio", theme=gr.themes.Soft()) as demo:
             )
             with gr.Row():
                 style_in = gr.Dropdown(
-                    label="🎨 Visual Art Style",
+                    label="🎨 Art Style",
                     choices=STYLE_CHOICES,
                     value=STYLE_CHOICES[0],
-                    min_width=150
+                    min_width=130
                 )
                 voice_in = gr.Dropdown(
-                    label="🎙️ Voice Option",
+                    label="🎙️ Voice",
                     choices=VOICE_CHOICES,
                     value=VOICE_CHOICES[0],
-                    min_width=150
+                    min_width=110
+                )
+                accent_in = gr.Dropdown(
+                    label="🌏 Accent",
+                    choices=ACCENT_CHOICES,
+                    value="Indian",
+                    min_width=110
                 )
             gen_btn = gr.Button("🚀 Generate Greeting", variant="primary", size="lg")
             status_md = gr.Markdown("*Ready.*")
+            with gr.Accordion("🔍 Trace", open=False):
+                trace_json = gr.JSON(value={}, show_label=False)
 
         with gr.Column(scale=5, min_width=320):
             video_out = gr.Video(label="📱 Video Greeting", height=480, autoplay=True)
@@ -163,8 +253,9 @@ with gr.Blocks(title="AI Greetings AV Studio", theme=gr.themes.Soft()) as demo:
 
     gen_btn.click(
         fn=run_pipeline,
-        inputs=[passcode_in, prompt_in, style_in, voice_in],
-        outputs=[video_out, dl_btn, status_md, banner]
+        inputs=[passcode_in, prompt_in, style_in, voice_in, accent_in],
+        outputs=[video_out, dl_btn, status_md, banner, trace_json],
+        show_progress_on=video_out
     )
 
 if __name__ == "__main__":
