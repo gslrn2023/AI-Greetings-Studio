@@ -148,7 +148,6 @@ def resolve_voice_plan(
 # =====================================================================
 # 5. EXPANDABLE BGM LIBRARY (WITH ANTI-REPEAT & LIVE 404 SAFEGUARD)
 # =====================================================================
-import requests  # (Can stay here or at the top of config.py)
 
 BGM_BASE_URL = "https://raw.githubusercontent.com/gslrn2023/Greetings-Bgms/main/"
 
