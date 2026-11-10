@@ -35,6 +35,9 @@ def run_pipeline(
     active_renderer = config.RENDER_ENGINE
     need_uguu = active_renderer in ("CREATOMATE", "OFF")
 
+    local_img_path = ""
+    local_tts_path = ""
+
     try:
         # Step 1: AI Creative Director (with automatic 30s retry if Gemini is busy)
         progress(0.15, desc="Step 1/4: Designing blueprint & color harmony...")
@@ -47,11 +50,17 @@ def run_pipeline(
         if not blueprint.get("is_safe", True):
             return None, gr.update(visible=False), "⚠️ Request declined by safety check.", format_status_banner()
 
-        img_prompt = blueprint["visual_prompt"]["image_gen_prompt"]
-        tts_script = blueprint["audio_prompt"].get("tts_script", "")
-        ai_archetype = blueprint["audio_prompt"].get("voice_archetype", "warm_female")
-        bgm_mood = blueprint["audio_prompt"].get("bgm_mood", "festive")
+        visual_block = blueprint.get("visual_prompt", {})
+        audio_block = blueprint.get("audio_prompt", {})
         ctx_analysis = blueprint.get("context_analysis", {})
+
+        img_prompt = visual_block.get("image_gen_prompt", "").strip()
+        if not img_prompt:
+            raise RuntimeError("AI Director returned an empty visual prompt. Please try again.")
+
+        tts_script = audio_block.get("tts_script", "")
+        ai_archetype = audio_block.get("voice_archetype", "warm_female")
+        bgm_mood = audio_block.get("bgm_mood", "festive")
         cultural_context = ctx_analysis.get("cultural_context", "global")
         tts_lang_code = ctx_analysis.get("tts_language_code", "en-IN")
         bgm_url = config.pick_bgm_url(bgm_mood)
@@ -103,6 +112,14 @@ def run_pipeline(
         raise
     except Exception as e:
         raise gr.Error(f"⚠️ Pipeline Error: {str(e)}")
+    finally:
+        # Clean up temporary artwork and voiceover folders in /tmp once render finishes
+        for tmp_asset in (local_img_path, local_tts_path):
+            if tmp_asset and os.path.exists(tmp_asset):
+                try:
+                    shutil.rmtree(os.path.dirname(tmp_asset), ignore_errors=True)
+                except OSError:
+                    pass
 
 STYLE_CHOICES = ["Auto - AI Choice"] + list(config.STYLE_MAP.keys())
 VOICE_CHOICES = ["Auto - AI Choice", "Female", "Male"]
@@ -146,4 +163,6 @@ with gr.Blocks(title="AI Greetings AV Studio", theme=gr.themes.Soft()) as demo:
     )
 
 if __name__ == "__main__":
-    demo.launch()
+    server_port = int(os.environ.get("PORT", os.environ.get("GRADIO_SERVER_PORT", 7860)))
+    share_flag = os.environ.get("GRADIO_SHARE", "false").strip().lower() in ("true", "1", "yes")
+    demo.launch(server_name="0.0.0.0", server_port=server_port, share=share_flag)
