@@ -12,3 +12,4 @@ Pillow
 sentencepiece
 protobuf
 edge-tts
+python-dotenv
