@@ -382,7 +382,14 @@ def render_local_video(
         if proc.returncode != 0:
             shutil.rmtree(temp_dir, ignore_errors=True)
             raise RuntimeError(f"FFmpeg Local Render Error:\n{proc.stderr[-600:]}")
-        return out_mp4
+        render_trace = {
+            "engine": "LOCAL",
+            "status": "success",
+            "camera_preset": cam_preset,
+            "unveil_preset": unveil_preset,
+            "bgm_track": bgm_url.split("/")[-1]
+        }
+        return out_mp4, render_trace
     except subprocess.TimeoutExpired:
         shutil.rmtree(temp_dir, ignore_errors=True)
         raise RuntimeError("FFmpeg video rendering timed out after 120 seconds.")
