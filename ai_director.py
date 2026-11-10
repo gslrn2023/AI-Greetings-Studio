@@ -55,8 +55,15 @@ def generate_creative_blueprint(
 
     max_attempts = 2
     last_error = None
+    director_trace = {
+        "model": config.GEMINI_MODEL,
+        "status": "failed",
+        "attempts_used": 0,
+        "errors": []
+    }
 
     for attempt in range(1, max_attempts + 1):
+        director_trace["attempts_used"] = attempt
         try:
             response = client.models.generate_content(
                 model=config.GEMINI_MODEL,
@@ -71,11 +78,15 @@ def generate_creative_blueprint(
             raw_text = (response.text or "").strip().replace("```json", "").replace("```", "").strip()
             if not raw_text:
                 raise RuntimeError("Empty response received from Gemini AI Director.")
-            return json.loads(raw_text)
+            blueprint = json.loads(raw_text)
+            director_trace["status"] = "success"
+            return blueprint, director_trace
 
         except Exception as e:
             last_error = e
-            print(f"[AI Director] Attempt {attempt}/{max_attempts} failed: {e}")
+            err_msg = f"Attempt {attempt}: {str(e)}"
+            director_trace["errors"].append(err_msg)
+            print(f"[AI Director] {err_msg}")
             if attempt < max_attempts:
                 if status_callback:
                     status_callback("⏳ AI Director is busy, retrying in 30 seconds (Attempt 2/2)...")
