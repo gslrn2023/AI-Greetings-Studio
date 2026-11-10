@@ -251,12 +251,18 @@ def render_local_video(
     out_mp4 = os.path.join(temp_dir, f"Greeting_{safe_slug}.mp4")
 
     # -----------------------------------------------------------------
-    # 1. RANDOMIZED SMOOTH CAMERA & ATMOSPHERE PRESET (WITH ANTI-REPEAT)
+    # 1 & 2. THREAD-SAFE RANDOMIZED CAMERA & CARD UNVEIL SELECTION
     # -----------------------------------------------------------------
-    camera_choices = ["slow_push_in", "slow_pull_back", "horizon_float_glow"]
-    available_cam = [c for c in camera_choices if c != _last_camera_preset] or camera_choices
-    cam_preset = random.choice(available_cam)
-    _last_camera_preset = cam_preset
+    with _render_lock:
+        camera_choices = ["slow_push_in", "slow_pull_back", "horizon_float_glow"]
+        available_cam = [c for c in camera_choices if c != _last_camera_preset] or camera_choices
+        cam_preset = random.choice(available_cam)
+        _last_camera_preset = cam_preset
+
+        unveil_choices = ["soft_vertical_float", "gentle_cascade", "pure_silk_dissolve"]
+        available_unveil = [u for u in unveil_choices if u != _last_unveil_preset] or unveil_choices
+        unveil_preset = random.choice(available_unveil)
+        _last_unveil_preset = unveil_preset
 
     if cam_preset == "slow_pull_back":
         # Starts softly framed in (1.14x) and smoothly pulls back to 1.0x
@@ -281,14 +287,6 @@ def render_local_video(
         ]
         x_expr, y_expr = random.choice(pan_dirs)
         eq_expr = "eq=saturation=1.06:contrast=1.03"
-
-    # -----------------------------------------------------------------
-    # 2. RANDOMIZED PLEASANT CARD & TEXT UNVEIL CHOREOGRAPHY
-    # -----------------------------------------------------------------
-    unveil_choices = ["soft_vertical_float", "gentle_cascade", "pure_silk_dissolve"]
-    available_unveil = [u for u in unveil_choices if u != _last_unveil_preset] or unveil_choices
-    unveil_preset = random.choice(available_unveil)
-    _last_unveil_preset = unveil_preset
 
     slide_sign = "-" if pos == "top" else "+"
 
@@ -373,7 +371,26 @@ def render_local_video(
             "-shortest", out_mp4
         ]
 
-    proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-    if proc.returncode != 0:
-        raise RuntimeError(f"FFmpeg Local Render Error:\n{proc.stderr[-600:]}")
-    return out_mp4
+    try:
+        proc = subprocess.run(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=120
+        )
+        if proc.returncode != 0:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+            raise RuntimeError(f"FFmpeg Local Render Error:\n{proc.stderr[-600:]}")
+        return out_mp4
+    except subprocess.TimeoutExpired:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+        raise RuntimeError("FFmpeg video rendering timed out after 120 seconds.")
+    finally:
+        # Delete intermediate assets while keeping out_mp4 inside temp_dir for Gradio
+        for temp_file in (card_png, text_png, bgm_path):
+            try:
+                if os.path.exists(temp_file):
+                    os.remove(temp_file)
+            except OSError:
+                pass
