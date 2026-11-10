@@ -1,0 +1,30 @@
+# Environment & Secrets
+.env
+.env.*
+!.env.example
+
+# Runtime State & Quota Tracking
+daily_usage.json
+
+# Python Bytecode & Virtual Environments
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/
+env/
+
+# Temporary Media & Font Caches
+*.mp4
+*.mp3
+*.wav
+*.png
+greeting_fonts_v4/
+tmp/
+temp/
+
+# IDE & OS Files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
