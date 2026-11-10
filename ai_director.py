@@ -1,3 +1,4 @@
+import os
 import json
 import time
 import random
@@ -5,8 +6,11 @@ from google import genai
 from google.genai import types
 import config
 
-def load_system_prompt() -> str:
-    with open("AI_prompt.txt", "r", encoding="utf-8") as f:
+def load_system_prompt(filename: str = "AI_prompt.txt") -> str:
+    filepath = os.path.join(config.BASE_DIR, filename)
+    if not os.path.exists(filepath):
+        raise FileNotFoundError(f"System prompt file '{filepath}' is missing.")
+    with open(filepath, "r", encoding="utf-8") as f:
         return f.read()
 
 def generate_creative_blueprint(
@@ -15,7 +19,7 @@ def generate_creative_blueprint(
     status_callback=None
 ) -> dict:
     if not config.GEMINI_API_KEY:
-        raise ValueError("Missing GEMINI_API_KEY in Hugging Face Space Secrets.")
+        raise ValueError("Missing GEMINI_API_KEY in environment secrets.")
 
     client = genai.Client(
         api_key=config.GEMINI_API_KEY,
@@ -23,7 +27,7 @@ def generate_creative_blueprint(
     )
     base_system_prompt = load_system_prompt()
 
-    sampled_lenses = random.sample(config.CREATIVE_STYLE_LENSES, k=3)
+    sampled_lenses = random.sample(config.CREATIVE_STYLE_LENSES, k=min(3, len(config.CREATIVE_STYLE_LENSES)))
     lenses_text = "\n".join([f"- {lens}" for lens in sampled_lenses])
 
     if style_override and style_override in config.STYLE_MAP:
@@ -65,6 +69,8 @@ def generate_creative_blueprint(
                 )
             )
             raw_text = (response.text or "").strip().replace("```json", "").replace("```", "").strip()
+            if not raw_text:
+                raise RuntimeError("Empty response received from Gemini AI Director.")
             return json.loads(raw_text)
 
         except Exception as e:
