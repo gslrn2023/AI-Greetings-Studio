@@ -2,7 +2,18 @@ import os
 import json
 import random
 import threading
+import requests
 from datetime import datetime, timezone, timedelta
+
+# Anchor root directory so relative files work from any launch path (Kaggle, Azure, Docker, CLI)
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# Optional .env loader for local / Azure / Docker deployments
+try:
+    from dotenv import load_dotenv
+    load_dotenv(os.path.join(BASE_DIR, ".env"))
+except ImportError:
+    pass
 
 # =====================================================================
 # 1. ENVIRONMENT SECRETS
@@ -241,7 +252,7 @@ CREATIVE_STYLE_LENSES = list(STYLE_MAP.values())
 # =====================================================================
 # 7. DAILY QUOTA TRACKER (IST)
 # =====================================================================
-QUOTA_FILE = "daily_usage.json"
+QUOTA_FILE = os.path.join(BASE_DIR, "daily_usage.json")
 _quota_lock = threading.Lock()
 IST = timezone(timedelta(hours=5, minutes=30))
 
