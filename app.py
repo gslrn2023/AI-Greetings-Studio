@@ -1,8 +1,10 @@
 import os
 import json
 import shutil
+import threading
 from datetime import datetime
 import gradio as gr
+from huggingface_hub import HfApi, hf_hub_download
 import config
 from ai_director import generate_creative_blueprint
 from image_gen import generate_artwork
@@ -11,21 +13,75 @@ from local_renderer import render_local_video
 from creatomate_renderer import render_creatomate_video
 
 EXECUTION_LOG_FILE = os.path.join(config.BASE_DIR, "execution_logs.json")
+_trace_lock = threading.Lock()
+
+def _normalize_repo_id(raw_val: str) -> str:
+    """Extracts 'owner/repo' even if a full Hugging Face URL was pasted."""
+    val = (raw_val or "").strip().rstrip("/")
+    for prefix in ("https://huggingface.co/datasets/", "https://huggingface.co/"):
+        if val.startswith(prefix):
+            val = val[len(prefix):]
+    return val.strip("/")
+
+TRACE_REPO_ID = _normalize_repo_id(os.environ.get("TRACE_REPO_ID", "GSLRN/greetings-studio-logs"))
+
+def _sync_trace_worker(trace_entry: dict) -> None:
+    """Thread-safe worker: merges trace locally and syncs to Private HF Dataset across any platform."""
+    with _trace_lock:
+        history = []
+        # 1. If local file doesn't exist yet (e.g., fresh container start), pull existing history from HF Dataset
+        if not os.path.exists(EXECUTION_LOG_FILE) and TRACE_REPO_ID and config.HF_TOKEN:
+            try:
+                downloaded = hf_hub_download(
+                    repo_id=TRACE_REPO_ID,
+                    filename="execution_logs.json",
+                    repo_type="dataset",
+                    token=config.HF_TOKEN
+                )
+                with open(downloaded, "r", encoding="utf-8") as f:
+                    loaded = json.load(f)
+                    if isinstance(loaded, list):
+                        history = loaded
+            except Exception:
+                pass
+
+        # 2. Otherwise read local history
+        if not history and os.path.exists(EXECUTION_LOG_FILE):
+            try:
+                with open(EXECUTION_LOG_FILE, "r", encoding="utf-8") as f:
+                    loaded = json.load(f)
+                    if isinstance(loaded, list):
+                        history = loaded
+            except Exception:
+                pass
+
+        # 3. Prepend latest run (keep latest 100 runs) & save locally
+        history.insert(0, trace_entry)
+        history = history[:100]
+        try:
+            with open(EXECUTION_LOG_FILE, "w", encoding="utf-8") as f:
+                json.dump(history, f, indent=2, ensure_ascii=False)
+        except Exception as e:
+            print(f"[Trace Logger] Local write warning: {e}")
+
+        # 4. Push updated execution_logs.json to Private HF Dataset
+        if TRACE_REPO_ID and config.HF_TOKEN:
+            try:
+                api = HfApi(token=config.HF_TOKEN)
+                api.upload_file(
+                    path_or_fileobj=EXECUTION_LOG_FILE,
+                    path_in_repo="execution_logs.json",
+                    repo_id=TRACE_REPO_ID,
+                    repo_type="dataset",
+                    commit_message=f"Trace log: {trace_entry.get('status', 'run')} ({trace_entry.get('timestamp_ist', '')})"
+                )
+                print(f"[Trace Logger] Synced execution_logs.json to private dataset '{TRACE_REPO_ID}'.")
+            except Exception as e:
+                print(f"[Trace Logger] Remote dataset sync warning ({TRACE_REPO_ID}): {e}")
 
 def save_execution_trace(trace_entry: dict) -> None:
-    """Saves the Black Box execution trace to execution_logs.json (retains last 50 runs)."""
-    try:
-        history = []
-        if os.path.exists(EXECUTION_LOG_FILE):
-            with open(EXECUTION_LOG_FILE, "r", encoding="utf-8") as f:
-                loaded = json.load(f)
-                if isinstance(loaded, list):
-                    history = loaded
-        history.insert(0, trace_entry)
-        with open(EXECUTION_LOG_FILE, "w", encoding="utf-8") as f:
-            json.dump(history[:50], f, indent=2, ensure_ascii=False)
-    except Exception as e:
-        print(f"[Trace Logger] Warning: Could not write execution_logs.json: {e}")
+    """Fires non-blocking background thread to save and upload trace log."""
+    threading.Thread(target=_sync_trace_worker, args=(trace_entry,), daemon=True).start()
 
 def format_status_banner() -> str:
     _, remaining = config.get_quota_status()
@@ -45,17 +101,17 @@ def run_pipeline(
 ):
     if not config.APP_PASSCODE or passcode.strip() != config.APP_PASSCODE:
         gr.Warning("🔒 Invalid Access Passcode.")
-        return None, gr.update(visible=False), "🔒 **Invalid Access Passcode.**", format_status_banner(), {}
+        return None, gr.update(visible=False), "🔒 **Invalid Access Passcode.**", format_status_banner()
 
     if not user_prompt or len(user_prompt.strip()) < 4:
         gr.Warning("⚠️ Please enter a descriptive greeting request.")
-        return None, gr.update(visible=False), "⚠️ **Please enter a descriptive greeting request.**", format_status_banner(), {}
+        return None, gr.update(visible=False), "⚠️ **Please enter a descriptive greeting request.**", format_status_banner()
 
     _, remaining = config.get_quota_status()
     if remaining <= 0:
         limit_msg = f"🛑 Daily limit of {config.MAX_DAILY_GREETINGS} greetings reached."
         gr.Warning(limit_msg)
-        return None, gr.update(visible=False), f"**{limit_msg}**", format_status_banner(), {}
+        return None, gr.update(visible=False), f"**{limit_msg}**", format_status_banner()
 
     active_renderer = config.RENDER_ENGINE
     need_uguu = active_renderer in ("CREATOMATE", "OFF")
@@ -88,7 +144,7 @@ def run_pipeline(
         if not blueprint.get("is_safe", True):
             trace_log["status"] = "declined_safety"
             save_execution_trace(trace_log)
-            return None, gr.update(visible=False), "⚠️ Request declined by safety check.", format_status_banner(), trace_log
+            return None, gr.update(visible=False), "⚠️ Request declined by safety check.", format_status_banner()
 
         visual_block = blueprint.get("visual_prompt", {})
         audio_block = blueprint.get("audio_prompt", {})
@@ -159,7 +215,7 @@ def run_pipeline(
                 f"- 🎙️ **TTS:** `{tts_trace['used_provider']} ({tts_trace['used_voice']})`\n"
                 f"- 🎵 **BGM:** `{bgm_filename}`"
             )
-            return None, gr.update(visible=False), test_links_md, format_status_banner(), trace_log
+            return None, gr.update(visible=False), test_links_md, format_status_banner()
 
         elif active_renderer == "CREATOMATE":
             progress(0.85, desc="Step 4/4: Rendering Greetings MP4 via Creatomate..")
@@ -188,8 +244,7 @@ def run_pipeline(
             local_mp4,
             gr.update(value=local_mp4, visible=True),
             summary_line,
-            format_status_banner(),
-            trace_log
+            format_status_banner()
         )
 
     except Exception as e:
@@ -198,7 +253,7 @@ def run_pipeline(
         trace_log["fatal_error"] = str(e)
         save_execution_trace(trace_log)
         gr.Warning(err_msg)
-        return None, gr.update(visible=False), f"**{err_msg}**", format_status_banner(), trace_log
+        return None, gr.update(visible=False), f"**{err_msg}**", format_status_banner()
     finally:
         for tmp_asset in (local_img_path, local_tts_path):
             if tmp_asset and os.path.exists(tmp_asset):
@@ -244,8 +299,6 @@ with gr.Blocks(title="AI Greetings AV Studio", theme=gr.themes.Soft()) as demo:
                 )
             gen_btn = gr.Button("🚀 Generate Greeting", variant="primary", size="lg")
             status_md = gr.Markdown("*Ready.*")
-            with gr.Accordion("🔍 Trace", open=False):
-                trace_json = gr.JSON(value={}, show_label=False)
 
         with gr.Column(scale=5, min_width=320):
             video_out = gr.Video(label="📱 Video Greeting", height=480, autoplay=True)
@@ -254,7 +307,7 @@ with gr.Blocks(title="AI Greetings AV Studio", theme=gr.themes.Soft()) as demo:
     gen_btn.click(
         fn=run_pipeline,
         inputs=[passcode_in, prompt_in, style_in, voice_in, accent_in],
-        outputs=[video_out, dl_btn, status_md, banner, trace_json],
+        outputs=[video_out, dl_btn, status_md, banner],
         show_progress_on=video_out
     )
 
