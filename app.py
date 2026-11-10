@@ -1,3 +1,5 @@
+import os
+import shutil
 import gradio as gr
 import config
 from ai_director import generate_creative_blueprint
