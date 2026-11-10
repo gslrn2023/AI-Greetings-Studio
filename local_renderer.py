@@ -1,8 +1,10 @@
 import os
 import re
+import shutil
 import random
 import textwrap
 import tempfile
+import threading
 import subprocess
 import requests
 from PIL import Image, ImageDraw, ImageFont
@@ -195,6 +197,7 @@ def create_split_overlay_layers(blueprint: dict, card_png_path: str, text_png_pa
 
 _last_camera_preset = None
 _last_unveil_preset = None
+_render_lock = threading.Lock()
 
 def render_local_video(
     blueprint: dict,
@@ -215,10 +218,21 @@ def render_local_video(
     pos = create_split_overlay_layers(blueprint, card_png, text_png)
 
     bgm_path = os.path.join(temp_dir, "bgm.mp3")
-    r = requests.get(bgm_url, timeout=45)
-    r.raise_for_status()
-    with open(bgm_path, "wb") as f:
-        f.write(r.content)
+    bgm_downloaded = False
+    for candidate_url in dict.fromkeys([bgm_url, f"{config.BGM_BASE_URL}festive.mp3"]):
+        try:
+            r = requests.get(candidate_url, timeout=30)
+            r.raise_for_status()
+            with open(bgm_path, "wb") as f:
+                f.write(r.content)
+            bgm_downloaded = True
+            break
+        except Exception as e:
+            print(f"[BGM Download] Warning for {candidate_url}: {e}")
+
+    if not bgm_downloaded:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+        raise RuntimeError("Failed to download background music track after fallback.")
 
     has_tts = bool(local_tts_path and audio_duration > 0)
     reveal_t = config.TEXT_REVEAL_DELAY
