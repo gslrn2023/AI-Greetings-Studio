@@ -162,6 +162,10 @@ def run_pipeline(
         visual_block = blueprint.get("visual_prompt", {})
         audio_block = blueprint.get("audio_prompt", {})
         ctx_analysis = blueprint.get("context_analysis", {})
+        comp_meta = blueprint.get("composition_metadata", {})
+
+        overlay_title = comp_meta.get("overlay_title", "")
+        overlay_subtitle = comp_meta.get("overlay_subtitle", "")
 
         img_prompt = visual_block.get("image_gen_prompt", "").strip()
         if not img_prompt:
@@ -184,6 +188,7 @@ def run_pipeline(
         trace_log["resolved_context"] = {
             "cultural_context": cultural_context,
             "tts_language_code": tts_lang_code,
+            "overlay_language_code": ctx_analysis.get("overlay_language_code", "en-IN"),
             "bgm_mood": bgm_mood,
             "bgm_track": bgm_filename
         }
@@ -221,7 +226,12 @@ def run_pipeline(
         # Step 4: Video Rendering
         if active_renderer == "OFF":
             progress(1.0, desc="Test Mode Complete!")
-            trace_log["steps"]["4_renderer"] = {"engine": "OFF", "status": "skipped_test_mode"}
+            trace_log["steps"]["4_renderer"] = {
+                "engine": "OFF",
+                "status": "skipped_test_mode",
+                "overlay_title": overlay_title,
+                "overlay_subtitle": overlay_subtitle
+            }
             trace_log["status"] = "success_test_mode"
             save_execution_trace(trace_log)
             test_links_md = (
@@ -235,7 +245,13 @@ def run_pipeline(
         elif active_renderer == "CREATOMATE":
             progress(0.85, desc="Step 4/4: Rendering Greetings MP4 via Creatomate..")
             local_mp4 = render_creatomate_video(blueprint, image_url, audio_url, audio_dur, bgm_url)
-            render_trace = {"engine": "CREATOMATE", "status": "success", "bgm_track": bgm_filename}
+            render_trace = {
+                "engine": "CREATOMATE",
+                "status": "success",
+                "overlay_title": overlay_title,
+                "overlay_subtitle": overlay_subtitle,
+                "bgm_track": bgm_filename
+            }
         else:
             progress(0.85, desc="Step 4/4: Rendering Greetings MP4 ..")
             local_mp4, render_trace = render_local_video(blueprint, local_img_path, local_tts_path, audio_dur, bgm_url)
