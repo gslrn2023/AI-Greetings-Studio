@@ -50,6 +50,9 @@ def generate_creative_blueprint(
         f"USER REQUEST: {user_prompt}\n"
         f"{style_directive}\n"
         f"MODEL TARGET: {model_hint}\n"
+        f"OVERLAY TEXT CONSTRAINT: Keep 'overlay_title' to 2-4 words and 'overlay_subtitle' strictly concise "
+        f"(maximum 4 to 6 words for Indian regional scripts like Telugu/Hindi/Tamil, or 5 to 8 words for English) "
+        f"so it fits cleanly on 1-2 lines inside the greeting card without truncation.\n"
         f"Return raw JSON blueprint now."
     )
 
