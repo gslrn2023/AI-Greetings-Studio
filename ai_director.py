@@ -50,9 +50,10 @@ def generate_creative_blueprint(
         f"USER REQUEST: {user_prompt}\n"
         f"{style_directive}\n"
         f"MODEL TARGET: {model_hint}\n"
-        f"OVERLAY TEXT CONSTRAINT: Keep 'overlay_title' to 2-4 words and 'overlay_subtitle' strictly concise "
-        f"(maximum 4 to 6 words for Indian regional scripts like Telugu/Hindi/Tamil, or 5 to 8 words for English) "
-        f"so it fits cleanly on 1-2 lines inside the greeting card without truncation.\n"
+        f"TEXT & VOICEOVER RULES (Adapt tone strictly to occasion—celebratory, health recovery, comforting, or solemn):\n"
+        f"1. 'overlay_title': Must be a complete, self-contained 2-to-4 word headline matching the occasion's mood (e.g., 'గృహ ప్రవేశ శుభాకాంక్షలు', 'Get Well Soon', or 'With Deepest Sympathy'). NEVER split a phrase halfway across the title and subtitle.\n"
+        f"2. 'overlay_subtitle': Must be a complete, grammatically whole 4-to-6 word message or recipient dedication below the divider line matching the emotional tone (e.g., 'విజయ్ మరియు వనిత గారికి శుభమస్తు', 'Wishing you a speedy recovery', or 'Our thoughts are with you') so it fits cleanly in 1-2 lines.\n"
+        f"3. 'tts_script': Naturally include the recipient's name(s) in the spoken voiceover script (for both English and Indian regional languages) with pacing and warmth appropriate to the occasion.\n"
         f"Return raw JSON blueprint now."
     )
 
