@@ -37,17 +37,33 @@ def save_and_optionally_upload_image(image: Image.Image, need_remote_url: bool =
     return local_img_path, public_url
 
 # =====================================================================
-# SECTION 2: TIER 1 ENGINE - SARVAM AI (BULBUL:V3 MULTILINGUAL INDIAN TTS)
+# SECTION 2: TIER 1 ENGINE - SARVAM AI (BULBUL:V4-FLASH & BULBUL:V3)
 # =====================================================================
-def _tts_sarvam(tts_script: str, speaker: str, lang_code: str, out_mp3_path: str) -> tuple[bool, str]:
-    """Calls Sarvam AI bulbul:v3 REST API with stabilized regional parameters and 48kHz audio."""
+def _tts_sarvam(
+    tts_script: str,
+    speaker: str,
+    lang_code: str,
+    out_mp3_path: str,
+    model_override: str = ""
+) -> tuple[bool, str, str]:
+    """
+    Calls Sarvam AI REST API with pace=1.0 and sample_rate=24000.
+    Uses bulbul:v4-flash for en-IN personas and bulbul:v3 for regional Indian scripts.
+    Returns (success, active_model, error_message).
+    """
     if not config.SARVAM_API_KEY:
         msg = "SARVAM_API_KEY not configured in environment."
         print(f"[TTS Tier-1: Sarvam] {msg}")
-        return False, msg
+        return False, "", msg
 
     clean_lang = (lang_code or "en-IN").strip()
-    dynamic_temp = 0.50 if clean_lang == "en-IN" else 0.35
+    clean_speaker = speaker.strip().lower()
+
+    # Determine active model: bulbul:v3 for ml-IN/od-IN or short v3 speaker IDs; bulbul:v4-flash for v4 personas
+    if clean_lang in ("ml-IN", "od-IN") or "_" not in clean_speaker:
+        active_model = "bulbul:v3"
+    else:
+        active_model = model_override or "bulbul:v4-flash"
 
     url = "https://api.sarvam.ai/text-to-speech"
     headers = {
@@ -57,36 +73,42 @@ def _tts_sarvam(tts_script: str, speaker: str, lang_code: str, out_mp3_path: str
     payload = {
         "text": tts_script,
         "target_language_code": clean_lang,
-        "speaker": speaker.lower(),
-        "model": config.SARVAM_MODEL,
-        "pace": 1.1,
-        "temperature": dynamic_temp,
-        "speech_sample_rate": 48000,
+        "speaker": clean_speaker,
+        "model": active_model,
+        "pace": 1.0,
+        "speech_sample_rate": 24000,
         "output_audio_codec": "mp3"
     }
+
+    # Only include temperature for bulbul:v3 regional stability
+    if active_model == "bulbul:v3":
+        payload["temperature"] = 0.50 if clean_lang == "en-IN" else 0.35
 
     try:
         resp = requests.post(url, json=payload, headers=headers, timeout=45)
         if resp.status_code != 200:
-            err_msg = f"HTTP {resp.status_code}: {resp.text[:240]}"
+            err_msg = f"HTTP {resp.status_code} ({active_model}): {resp.text[:240]}"
             print(f"[TTS Tier-1: Sarvam] {err_msg}")
-            return False, err_msg
+            return False, active_model, err_msg
 
         audios = resp.json().get("audios", [])
         if not audios:
-            err_msg = "Empty 'audios' array returned from Sarvam API."
+            err_msg = f"Empty 'audios' array returned from Sarvam API ({active_model})."
             print(f"[TTS Tier-1: Sarvam] {err_msg}")
-            return False, err_msg
+            return False, active_model, err_msg
 
         audio_bytes = base64.b64decode(audios[0])
         with open(out_mp3_path, "wb") as f:
             f.write(audio_bytes)
-        print(f"[TTS Tier-1: Sarvam] Success: speaker='{speaker}', lang='{clean_lang}', temp={dynamic_temp}, pace=1.1.")
-        return True, ""
+        print(
+            f"[TTS Tier-1: Sarvam] Success: model='{active_model}', speaker='{clean_speaker}', "
+            f"lang='{clean_lang}', pace=1.0, rate=24000."
+        )
+        return True, active_model, ""
     except Exception as e:
-        err_msg = f"Exception: {str(e)}"
+        err_msg = f"Exception ({active_model}): {str(e)}"
         print(f"[TTS Tier-1: Sarvam] {err_msg}")
-        return False, err_msg
+        return False, active_model, err_msg
 
 # =====================================================================
 # SECTION 3: TIER 2 ENGINE - AZURE NEURAL TTS (EDGE-TTS REGIONAL FALLBACK)
@@ -174,6 +196,7 @@ def synthesize_voiceover(
         "used_voice": "Muted",
         "language_code": "en-IN",
         "duration_sec": 0.0,
+        "tts_script": clean_script,
         "waterfall_attempts": []
     }
 
@@ -194,18 +217,25 @@ def synthesize_voiceover(
         provider = step.get("provider", "")
         voice = step.get("voice", "")
         lang_code = step.get("lang_code", "en-IN")
+        step_model = step.get("model", "")
         err_detail = ""
+        used_model = ""
 
         if provider == "sarvam":
-            synthesized, err_detail = _tts_sarvam(clean_script, voice, lang_code, local_mp3_path)
+            synthesized, used_model, err_detail = _tts_sarvam(
+                clean_script, voice, lang_code, local_mp3_path, model_override=step_model
+            )
         elif provider == "azure":
             synthesized, err_detail = _tts_azure_edge(clean_script, voice, local_mp3_path)
+            used_model = "edge-tts-neural"
         elif provider == "elevenlabs":
             synthesized, err_detail = _tts_elevenlabs(clean_script, voice, local_mp3_path)
+            used_model = config.ELEVENLABS_MODEL
 
         attempt_record = {
             "tier": idx,
             "provider": PROVIDER_LABELS.get(provider, provider),
+            "model": used_model,
             "voice": voice,
             "lang_code": lang_code,
             "status": "success" if synthesized else "failed"
@@ -217,6 +247,7 @@ def synthesize_voiceover(
         if synthesized:
             tts_trace["status"] = "success" if idx == 1 else f"fallback_tier_{idx}"
             tts_trace["used_provider"] = PROVIDER_LABELS.get(provider, provider)
+            tts_trace["used_model"] = used_model
             tts_trace["used_voice"] = voice
             tts_trace["language_code"] = lang_code
             break
