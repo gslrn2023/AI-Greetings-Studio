@@ -70,19 +70,17 @@ def _tts_sarvam(
         "api-subscription-key": config.SARVAM_API_KEY,
         "Content-Type": "application/json"
     }
+    dynamic_temp = 0.45 if clean_lang == "en-IN" else 0.35
     payload = {
         "text": tts_script,
         "target_language_code": clean_lang,
         "speaker": clean_speaker,
         "model": active_model,
         "pace": 1.0,
-        "speech_sample_rate": 24000,
+        "temperature": dynamic_temp,
+        "speech_sample_rate": 48000,
         "output_audio_codec": "mp3"
     }
-
-    # Only include temperature for bulbul:v3 regional stability
-    if active_model == "bulbul:v3":
-        payload["temperature"] = 0.50 if clean_lang == "en-IN" else 0.35
 
     try:
         resp = requests.post(url, json=payload, headers=headers, timeout=45)
@@ -102,7 +100,7 @@ def _tts_sarvam(
             f.write(audio_bytes)
         print(
             f"[TTS Tier-1: Sarvam] Success: model='{active_model}', speaker='{clean_speaker}', "
-            f"lang='{clean_lang}', pace=1.0, rate=24000."
+            f"lang='{clean_lang}', temp={dynamic_temp}, pace=1.0, rate=48000."
         )
         return True, active_model, ""
     except Exception as e:
