@@ -37,7 +37,7 @@ def save_and_optionally_upload_image(image: Image.Image, need_remote_url: bool =
     return local_img_path, public_url
 
 # =====================================================================
-# SECTION 2: TIER 1 ENGINE - SARVAM AI (BULBUL:V4-FLASH & BULBUL:V3)
+# SECTION 2: TIER 1 & 2 ENGINE - SARVAM AI (BULBUL:V4-FLASH & BULBUL:V3)
 # =====================================================================
 def _tts_sarvam(
     tts_script: str,
@@ -47,65 +47,71 @@ def _tts_sarvam(
     model_override: str = ""
 ) -> tuple[bool, str, str]:
     """
-    Calls Sarvam AI REST API with pace=1.0 and sample_rate=24000.
-    Uses bulbul:v4-flash for en-IN personas and bulbul:v3 for regional Indian scripts.
+    Calls Sarvam AI REST API:
+    - bulbul:v4-flash (Tier 1): pace=1.0, speech_sample_rate=24000
+    - bulbul:v3 (Tier 2 Fallback): pace=1.0, speech_sample_rate=48000, temperature=0.35/0.45
     Returns (success, active_model, error_message).
     """
     if not config.SARVAM_API_KEY:
         msg = "SARVAM_API_KEY not configured in environment."
-        print(f"[TTS Tier-1: Sarvam] {msg}")
+        print(f"[TTS Sarvam] {msg}")
         return False, "", msg
 
     clean_lang = (lang_code or "en-IN").strip()
     clean_speaker = speaker.strip().lower()
 
-    # Determine active model: bulbul:v3 for ml-IN/od-IN or short v3 speaker IDs; bulbul:v4-flash for v4 personas
-    if clean_lang in ("ml-IN", "od-IN") or "_" not in clean_speaker:
-        active_model = "bulbul:v3"
+    # Determine active model from step override or speaker naming convention
+    if model_override:
+        active_model = model_override
     else:
-        active_model = model_override or "bulbul:v4-flash"
+        active_model = "bulbul:v4-flash" if "_" in clean_speaker else "bulbul:v3"
+
+    # Model-specific sample rate: 24000 for v4-flash, 48000 for v3 fallback
+    sample_rate = 24000 if active_model == "bulbul:v4-flash" else 48000
 
     url = "https://api.sarvam.ai/text-to-speech"
     headers = {
         "api-subscription-key": config.SARVAM_API_KEY,
         "Content-Type": "application/json"
     }
-    dynamic_temp = 0.45 if clean_lang == "en-IN" else 0.35
     payload = {
         "text": tts_script,
         "target_language_code": clean_lang,
         "speaker": clean_speaker,
         "model": active_model,
         "pace": 1.0,
-        "temperature": dynamic_temp,
-        "speech_sample_rate": 48000,
+        "speech_sample_rate": sample_rate,
         "output_audio_codec": "mp3"
     }
+
+    # Include stabilized temperature for bulbul:v3 fallback
+    if active_model == "bulbul:v3":
+        payload["temperature"] = 0.45 if clean_lang == "en-IN" else 0.35
 
     try:
         resp = requests.post(url, json=payload, headers=headers, timeout=45)
         if resp.status_code != 200:
             err_msg = f"HTTP {resp.status_code} ({active_model}): {resp.text[:240]}"
-            print(f"[TTS Tier-1: Sarvam] {err_msg}")
+            print(f"[TTS Sarvam] {err_msg}")
             return False, active_model, err_msg
 
         audios = resp.json().get("audios", [])
         if not audios:
             err_msg = f"Empty 'audios' array returned from Sarvam API ({active_model})."
-            print(f"[TTS Tier-1: Sarvam] {err_msg}")
+            print(f"[TTS Sarvam] {err_msg}")
             return False, active_model, err_msg
 
         audio_bytes = base64.b64decode(audios[0])
         with open(out_mp3_path, "wb") as f:
             f.write(audio_bytes)
         print(
-            f"[TTS Tier-1: Sarvam] Success: model='{active_model}', speaker='{clean_speaker}', "
-            f"lang='{clean_lang}', temp={dynamic_temp}, pace=1.0, rate=48000."
+            f"[TTS Sarvam] Success: model='{active_model}', speaker='{clean_speaker}', "
+            f"lang='{clean_lang}', pace=1.0, rate={sample_rate}."
         )
         return True, active_model, ""
     except Exception as e:
         err_msg = f"Exception ({active_model}): {str(e)}"
-        print(f"[TTS Tier-1: Sarvam] {err_msg}")
+        print(f"[TTS Sarvam] {err_msg}")
         return False, active_model, err_msg
 
 # =====================================================================
