@@ -128,10 +128,10 @@ def create_split_overlay_layers(blueprint: dict, card_png_path: str, text_png_pa
     # 1. Outer luxury border frame on Card Layer
     draw_card.rounded_rectangle([36, 36, W - 36, H - 36], radius=32, outline=border_rgba, width=3)
 
-    # 2. Floating Glass Card
-    card_w, card_h = int(W * 0.89), int(H * 0.195)
+# 2. Floating Glass Card (Lifted to 0.685 on bottom to stay clear of player scrubber bar)
+    card_w, card_h = int(W * 0.89), int(H * 0.20)
     card_x1 = (W - card_w) // 2
-    card_y1 = int(H * 0.06) if pos == "top" else int(H * 0.745)
+    card_y1 = int(H * 0.06) if pos == "top" else int(H * 0.685)
     card_x2, card_y2 = card_x1 + card_w, card_y1 + card_h
 
     draw_card.rounded_rectangle(
@@ -143,7 +143,7 @@ def create_split_overlay_layers(blueprint: dict, card_png_path: str, text_png_pa
     )
 
     # 3. Accent Divider Line with central diamond glow on Card Layer
-    div_y = card_y1 + int(card_h * 0.48)
+    div_y = card_y1 + int(card_h * 0.46)
     div_half = int(card_w * 0.28)
     draw_card.line([(W // 2 - div_half, div_y), (W // 2 + div_half, div_y)], fill=primary_rgba, width=3)
     draw_card.polygon(
@@ -151,27 +151,27 @@ def create_split_overlay_layers(blueprint: dict, card_png_path: str, text_png_pa
         fill=primary_rgba
     )
 
-    # 4. Load Fonts (Noto Sans Indic for regional scripts, Luxury Latin for English)
+    # 4. Load Fonts (Larger sizes + expanded wrap_width so Indic matras never clip)
     if is_indic:
-        title_font_size = 54 if len(title) <= 20 else 44
-        sub_font_size = 40
-        wrap_width = 24
+        title_font_size = 60 if len(title) <= 22 else 50
+        sub_font_size = 44
+        wrap_width = 32
     else:
-        title_font_size = 66 if len(title) <= 18 else (56 if len(title) <= 24 else 48)
-        sub_font_size = 45
-        wrap_width = 28
+        title_font_size = 70 if len(title) <= 18 else (60 if len(title) <= 24 else 52)
+        sub_font_size = 48
+        wrap_width = 30
 
     title_font = _get_font(font_family, title_font_size, active_lang)
     sub_font = _get_font("Montserrat-SemiBold", sub_font_size, active_lang)
 
     # Draw Headline
-    title_y = card_y1 + int(card_h * 0.27)
+    title_y = card_y1 + int(card_h * 0.26)
     draw_text.text((W // 2 + 3, title_y + 4), title, font=title_font, fill=(0, 0, 0, 230), anchor="mm")
     draw_text.text((W // 2, title_y), title, font=title_font, fill=primary_rgba, anchor="mm")
 
     # Draw Wrapped Subtitle
     wrapped_sub = "\n".join(textwrap.wrap(subtitle, width=wrap_width)[:2])
-    sub_y = card_y1 + int(card_h * 0.74)
+    sub_y = card_y1 + int(card_h * 0.73)
     draw_text.multiline_text(
         (W // 2 + 2, sub_y + 3),
         wrapped_sub,
@@ -382,9 +382,12 @@ def render_local_video(
         if proc.returncode != 0:
             shutil.rmtree(temp_dir, ignore_errors=True)
             raise RuntimeError(f"FFmpeg Local Render Error:\n{proc.stderr[-600:]}")
+        meta_block = blueprint.get("composition_metadata", {})
         render_trace = {
             "engine": "LOCAL",
             "status": "success",
+            "overlay_title": meta_block.get("overlay_title", ""),
+            "overlay_subtitle": meta_block.get("overlay_subtitle", ""),
             "camera_preset": cam_preset,
             "unveil_preset": unveil_preset,
             "bgm_track": bgm_url.split("/")[-1]
