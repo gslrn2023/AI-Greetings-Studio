@@ -5,6 +5,7 @@ import threading
 from datetime import datetime
 import gradio as gr
 from huggingface_hub import HfApi, hf_hub_download
+from huggingface_hub.utils import EntryNotFoundError, RepositoryNotFoundError
 import config
 from ai_director import generate_creative_blueprint
 from image_gen import generate_artwork
@@ -26,27 +27,38 @@ def _normalize_repo_id(raw_val: str) -> str:
 TRACE_REPO_ID = _normalize_repo_id(os.environ.get("TRACE_REPO_ID", "GSLRN/greetings-studio-logs"))
 
 def _sync_trace_worker(trace_entry: dict) -> None:
-    """Thread-safe worker: merges trace locally and syncs to Private HF Dataset across any platform."""
+    """
+    Thread-safe worker: treats the Private HF Dataset as the source of truth.
+    If execution_logs.json is manually deleted on HF Dataset, starts a fresh file automatically.
+    """
     with _trace_lock:
         history = []
-        # 1. If local file doesn't exist yet (e.g., fresh container start), pull existing history from HF Dataset
-        if not os.path.exists(EXECUTION_LOG_FILE) and TRACE_REPO_ID and config.HF_TOKEN:
+        remote_checked = False
+
+        # 1. Check Private HF Dataset first (handles manual file deletion on HF gracefully)
+        if TRACE_REPO_ID and config.HF_TOKEN:
             try:
                 downloaded = hf_hub_download(
                     repo_id=TRACE_REPO_ID,
                     filename="execution_logs.json",
                     repo_type="dataset",
-                    token=config.HF_TOKEN
+                    token=config.HF_TOKEN,
+                    force_download=True
                 )
                 with open(downloaded, "r", encoding="utf-8") as f:
                     loaded = json.load(f)
                     if isinstance(loaded, list):
                         history = loaded
-            except Exception:
-                pass
+                remote_checked = True
+            except (EntryNotFoundError, RepositoryNotFoundError):
+                # File was manually deleted on HF Dataset (or first ever run) -> reset history cleanly
+                history = []
+                remote_checked = True
+            except Exception as e:
+                print(f"[Trace Logger] Remote fetch warning, falling back to local cache: {e}")
 
-        # 2. Otherwise read local history
-        if not history and os.path.exists(EXECUTION_LOG_FILE):
+        # 2. Fallback to local file only if remote dataset wasn't configured or temporarily unreachable
+        if not remote_checked and os.path.exists(EXECUTION_LOG_FILE):
             try:
                 with open(EXECUTION_LOG_FILE, "r", encoding="utf-8") as f:
                     loaded = json.load(f)
@@ -55,9 +67,9 @@ def _sync_trace_worker(trace_entry: dict) -> None:
             except Exception:
                 pass
 
-        # 3. Prepend latest run (keep latest 100 runs) & save locally
+        # 3. Prepend latest run (keep latest 50 runs) & save locally
         history.insert(0, trace_entry)
-        history = history[:100]
+        history = history[:50]
         try:
             with open(EXECUTION_LOG_FILE, "w", encoding="utf-8") as f:
                 json.dump(history, f, indent=2, ensure_ascii=False)
@@ -119,11 +131,12 @@ def run_pipeline(
     local_img_path = ""
     local_tts_path = ""
 
-    # Initialize Black Box Trace Record
+    # Initialize Black Box Trace Record (includes user_prompt)
     trace_log = {
         "timestamp_ist": datetime.now(config.IST).strftime("%Y-%m-%d %H:%M:%S IST"),
         "status": "in_progress",
         "inputs": {
+            "user_prompt": user_prompt.strip(),
             "style_override": style_override,
             "voice_override": voice_override,
             "accent_override": accent_override
@@ -175,16 +188,17 @@ def run_pipeline(
             "bgm_track": bgm_filename
         }
 
-        # Step 2: Image Generation
+        # Step 2: Image Generation (logs image_gen_prompt sent to FLUX / Z-Image)
         progress(0.42, desc="Step 2/4: Generating artwork ...")
         pil_img = generate_artwork(img_prompt)
         local_img_path, image_url = save_and_optionally_upload_image(pil_img, need_remote_url=need_uguu)
         trace_log["steps"]["2_image_gen"] = {
             "engine": config.IMAGE_ENGINE,
-            "status": "success"
+            "status": "success",
+            "image_gen_prompt": img_prompt
         }
 
-        # Step 3: Voiceover Synthesis
+        # Step 3: Voiceover Synthesis (logs tts_script and active Sarvam model)
         if tts_script and ai_archetype != "none":
             voice_plan = config.resolve_voice_plan(voice_override, ai_archetype, cultural_context, tts_lang_code)
             progress(0.68, desc="Step 3/4: Synthesizing voiceover...")
@@ -199,6 +213,7 @@ def run_pipeline(
                 "used_provider": "Muted",
                 "used_voice": "none",
                 "duration_sec": 0.0,
+                "tts_script": "",
                 "waterfall_attempts": []
             }
         trace_log["steps"]["3_voiceover_tts"] = tts_trace
