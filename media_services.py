@@ -67,7 +67,7 @@ def _tts_sarvam(
         active_model = "bulbul:v4-flash" if "_" in clean_speaker else "bulbul:v3"
 
     # Model-specific sample rate: 24000 for v4-flash, 48000 for v3 fallback
-    sample_rate = 24000 if active_model == "bulbul:v4-flash" else 48000
+    sample_rate = 48000
 
     url = "https://api.sarvam.ai/text-to-speech"
     headers = {
