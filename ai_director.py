@@ -53,7 +53,7 @@ def generate_creative_blueprint(
         f"TEXT & VOICEOVER RULES (Adapt tone strictly to occasion—celebratory, health recovery, comforting, or solemn):\n"
         f"1. 'overlay_title': Must be a complete, self-contained 2-to-4 word headline matching the occasion's mood (e.g., 'గృహ ప్రవేశ శుభాకాంక్షలు', 'Get Well Soon', or 'With Deepest Sympathy'). NEVER split a phrase halfway across the title and subtitle.\n"
         f"2. 'overlay_subtitle': Must be a complete, grammatically whole 4-to-6 word message or recipient dedication below the divider line matching the emotional tone (e.g., 'విజయ్ మరియు వనిత గారికి శుభమస్తు', 'Wishing you a speedy recovery', or 'Our thoughts are with you') so it fits cleanly in 1-2 lines.\n"
-        f"3. 'tts_script': Naturally include the recipient's name(s) in the spoken voiceover script (for both English and Indian regional languages) with pacing and warmth appropriate to the occasion.\n"
+            f"3. 'tts_script': Naturally include the recipient's name(s) in the spoken voiceover script. Write smooth, flowing sentences for TTS synthesis: avoid comma-separated word lists (use conjunctions like 'మరియు'/'और'/'and' instead of serial commas), and NEVER use ellipses ('...'), semicolons (';'), or mid-sentence dashes ('—'/'-') which cause unnatural TTS pauses.\n"
         f"Return raw JSON blueprint now."
     )
 
