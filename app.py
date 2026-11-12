@@ -24,7 +24,7 @@ def _normalize_repo_id(raw_val: str) -> str:
             val = val[len(prefix):]
     return val.strip("/")
 
-TRACE_REPO_ID = _normalize_repo_id(os.environ.get("TRACE_REPO_ID", "GSLRN/greetings-studio-logs"))
+TRACE_REPO_ID = _normalize_repo_id(os.environ.get("TRACE_REPO_ID", ""))
 
 def _sync_trace_worker(trace_entry: dict) -> None:
     """
