@@ -81,6 +81,7 @@ def _tts_sarvam(
         "model": active_model,
         "pace": 1.0,
         "speech_sample_rate": sample_rate,
+        "enable_preprocessing": True,
         "output_audio_codec": "mp3"
     }
 
@@ -101,7 +102,7 @@ def _tts_sarvam(
             print(f"[TTS Sarvam] {err_msg}")
             return False, active_model, err_msg
 
-        audio_bytes = base64.b64decode(audios[0])
+        audio_bytes = base64.b64decode("".join(audios))
         with open(out_mp3_path, "wb") as f:
             f.write(audio_bytes)
         print(
@@ -184,16 +185,35 @@ def _tts_elevenlabs(tts_script: str, voice_id: str, out_mp3_path: str) -> tuple[
 # =====================================================================
 # SECTION 5: MASTER 3-TIER WATERFALL ORCHESTRATOR WITH BLACK BOX TRACE
 # =====================================================================
+def _sanitize_tts_text(raw_text: str) -> str:
+    """
+    Cleans markdown, hesitation-triggering punctuation (ellipses, dashes, semicolons),
+    and extra whitespace so Sarvam/Azure/ElevenLabs synthesize smooth, continuous speech.
+    """
+    txt = re.sub(r"[*_#`~<>\"“”‘’]", "", (raw_text or ""))
+    # Replace ellipses with a single period
+    txt = re.sub(r"\.{2,}|…", ".", txt)
+    # Replace em-dashes, en-dashes, semicolons, and colons with a smooth space
+    txt = re.sub(r"\s*[—–;:]\s*", " ", txt)
+    # Replace spaced hyphens (" - ") with a space while preserving hyphenated words
+    txt = re.sub(r"\s+-\s+", " ", txt)
+    # Collapse excess commas or space before punctuation
+    txt = re.sub(r"\s+([,.!?।])", r"\1", txt)
+    txt = re.sub(r",{2,}", ",", txt)
+    # Normalize all newlines and multi-spaces into a single space
+    txt = re.sub(r"\s+", " ", txt).strip()
+    return txt
+
 def synthesize_voiceover(
     tts_script: str,
     voice_plan: list[dict],
     need_remote_url: bool = True
 ) -> tuple[str, str, float, dict]:
     """
-    Executes the ordered 3-tier voice_plan (Sarvam -> Azure Regional -> ElevenLabs).
+    Executes the ordered voice_plan waterfall (Sarvam -> Azure Regional -> ElevenLabs).
     Returns (local_mp3_path, public_audio_url, duration_seconds, tts_trace).
     """
-    clean_script = re.sub(r"[*_#`~<>]", "", (tts_script or "")).strip()
+    clean_script = _sanitize_tts_text(tts_script)
     tts_trace = {
         "status": "skipped",
         "used_provider": "None",
