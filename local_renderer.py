@@ -197,6 +197,7 @@ def create_split_overlay_layers(blueprint: dict, card_png_path: str, text_png_pa
 
 _last_camera_preset = None
 _last_unveil_preset = None
+_last_intro_preset = None
 _render_lock = threading.Lock()
 
 def render_local_video(
@@ -205,12 +206,13 @@ def render_local_video(
     local_tts_path: str,
     audio_duration: float,
     bgm_url: str
-) -> str:
+) -> tuple[str, dict]:
     """
     Renders 1088x1920 MP4 locally via FFmpeg with randomized smooth camera presets,
-    pleasant card unveil choreography, bright Frame-0 WhatsApp thumbnail, and faststart metadata.
+    intro materialization effects (preserving Frame-0 WhatsApp thumbnail),
+    pleasant card unveil choreography, and faststart metadata.
     """
-    global _last_camera_preset, _last_unveil_preset
+    global _last_camera_preset, _last_unveil_preset, _last_intro_preset
 
     temp_dir = tempfile.mkdtemp()
     card_png = os.path.join(temp_dir, "card_layer.png")
@@ -251,7 +253,7 @@ def render_local_video(
     out_mp4 = os.path.join(temp_dir, f"Greeting_{safe_slug}.mp4")
 
     # -----------------------------------------------------------------
-    # 1 & 2. THREAD-SAFE RANDOMIZED CAMERA & CARD UNVEIL SELECTION
+    # 1, 2 & 3. THREAD-SAFE RANDOMIZED CAMERA, UNVEIL & INTRO EFFECTS
     # -----------------------------------------------------------------
     with _render_lock:
         camera_choices = ["slow_push_in", "slow_pull_back", "horizon_float_glow"]
@@ -264,22 +266,31 @@ def render_local_video(
         unveil_preset = random.choice(available_unveil)
         _last_unveil_preset = unveil_preset
 
+        intro_choices = [
+            "mosaic_pixel_resolve",
+            "iris_portal_bloom",
+            "slit_tile_blinds",
+            "golden_shimmer_sweep",
+            "clean_cinematic"
+        ]
+        available_intro = [i for i in intro_choices if i != _last_intro_preset] or intro_choices
+        intro_preset = random.choice(available_intro)
+        _last_intro_preset = intro_preset
+
+    # Camera Motion Expressions
     if cam_preset == "slow_pull_back":
-        # Starts softly framed in (1.14x) and smoothly pulls back to 1.0x
         z_expr = "if(eq(on,1),1.14,max(zoom-0.00045,1.0))"
         x_expr = f"iw/2-(iw/zoom/2)+((iw-iw/zoom)*0.12*(1-on/{total_frames}))"
         y_expr = f"ih/2-(ih/zoom/2)-((ih-ih/zoom)*0.12*(1-on/{total_frames}))"
         eq_expr = "eq=saturation=1.06:contrast=1.03"
 
     elif cam_preset == "horizon_float_glow":
-        # Gentle horizontal drift + subtle warm luminance breathing for diyas/lights
         z_expr = "min(zoom+0.00040,1.12)"
         x_expr = f"iw/2-(iw/zoom/2)+((iw-iw/zoom)*0.20*(on/{total_frames}))"
         y_expr = "ih/2-(ih/zoom/2)"
         eq_expr = "eq=saturation=1.07:contrast=1.03:brightness='0.018*sin(2*PI*t/4.0)':eval=frame"
 
     else:
-        # Classic slow push-in (1.0x -> 1.14x) with gentle diagonal drift
         z_expr = "min(zoom+0.00048,1.14)"
         pan_dirs = [
             (f"iw/2-(iw/zoom/2)+((iw-iw/zoom)*0.16*(on/{total_frames}))", f"ih/2-(ih/zoom/2)-((ih-ih/zoom)*0.14*(on/{total_frames}))"),
@@ -288,36 +299,73 @@ def render_local_video(
         x_expr, y_expr = random.choice(pan_dirs)
         eq_expr = "eq=saturation=1.06:contrast=1.03"
 
+    # Card & Text Unveil Expressions
     slide_sign = "-" if pos == "top" else "+"
 
     if unveil_preset == "gentle_cascade":
-        # Card settles softly from above (-45px -> 0) while text rises gently (+20px -> 0)
         card_fade_d = 0.50
         txt_fade_d = 0.50
         card_y_expr = f"if(lt(t,{card_start_t}),H,(-45)*pow(max(0,1-(t-{card_start_t})/0.55),2))"
         text_y_expr = f"if(lt(t,{reveal_t}),H,(+20)*pow(max(0,1-(t-{reveal_t})/0.50),2))"
 
     elif unveil_preset == "pure_silk_dissolve":
-        # Calm editorial in-place alpha dissolve with a subtle 10px text settle
         card_fade_d = 0.60
         txt_fade_d = 0.60
         card_y_expr = f"if(lt(t,{card_start_t}),H,0)"
         text_y_expr = f"if(lt(t,{reveal_t}),H,({slide_sign}10)*pow(max(0,1-(t-{reveal_t})/0.55),2))"
 
     else:
-        # Soft vertical float (80px card glide + 25px text glide)
         card_fade_d = 0.45
         txt_fade_d = 0.45
         card_y_expr = f"if(lt(t,{card_start_t}),H,({slide_sign}80)*pow(max(0,1-(t-{card_start_t})/0.55),2))"
         text_y_expr = f"if(lt(t,{reveal_t}),H,({slide_sign}25)*pow(max(0,1-(t-{reveal_t})/0.50),2))"
 
-    print(f"[Video Choreography] Camera='{cam_preset}' | Card Unveil='{unveil_preset}'")
-
-    # Frame 0 (t=0.0s) remains 100% bright with zero fade-from-black for WhatsApp thumbnails
-    v_filter = (
+    # Intro Materialization Effect (Frame 0 stays 100% sharp via eq(N,0); effect runs t=0.03s -> 1.65s)
+    base_bg_chain = (
         f"[0:v]scale=1360:2400,zoompan=z='{z_expr}':"
         f"x='{x_expr}':y='{y_expr}':d={total_frames}:s=1088x1920:fps={config.VIDEO_FPS},"
-        f"{eq_expr}[bg];"
+        f"{eq_expr},format=yuv420p"
+    )
+
+    if intro_preset == "mosaic_pixel_resolve":
+        # Image forms from chunky stained-glass mosaic pixels into full HD over 1.6s
+        bg_stage = (
+            f"{base_bg_chain},split=2[bg_sharp][bg_tmp];"
+            f"[bg_tmp]scale=34:60:flags=neighbor,scale=1088:1920:flags=neighbor[bg_fx];"
+            f"[bg_sharp][bg_fx]blend=all_expr='if(eq(N,0),A,if(lt(T,1.6),A*(T/1.6)+B*(1-T/1.6),A))'[bg]"
+        )
+    elif intro_preset == "iris_portal_bloom":
+        # Center-outward radial focus bloom from warm golden bokeh blur over 1.65s
+        bg_stage = (
+            f"{base_bg_chain},split=2[bg_sharp][bg_tmp];"
+            f"[bg_tmp]gblur=sigma=24,eq=brightness=0.05:saturation=1.15[bg_fx];"
+            f"[bg_sharp][bg_fx]blend=all_expr='if(eq(N,0),A,if(lt(T,1.65),if(lt(hypot(X-W/2,Y-H/2),1150*(T/1.65)),A,B),A))'[bg]"
+        )
+    elif intro_preset == "slit_tile_blinds":
+        # 12 vertical architectural glass louvers/tiles wipe open in unison over 1.55s
+        bg_stage = (
+            f"{base_bg_chain},split=2[bg_sharp][bg_tmp];"
+            f"[bg_tmp]gblur=sigma=20,eq=brightness=0.07[bg_fx];"
+            f"[bg_sharp][bg_fx]blend=all_expr='if(eq(N,0),A,if(lt(T,1.55),if(lt(mod(X,90),90*(T/1.55)),A,B),A))'[bg]"
+        )
+    elif intro_preset == "golden_shimmer_sweep":
+        # Diagonal golden-white light ray sweeps across the artwork from top-left to bottom-right over 1.6s
+        bg_stage = (
+            f"{base_bg_chain},split=2[bg_sharp][bg_tmp];"
+            f"[bg_tmp]eq=brightness=0.22:contrast=1.08:saturation=1.20[bg_fx];"
+            f"[bg_sharp][bg_fx]blend=all_expr='if(eq(N,0),A,if(lt(T,1.6),if(lt(abs((X+Y*0.6)-3000*(T/1.6)),220),B,A),A))'[bg]"
+        )
+    else:
+        # Clean cinematic camera movement without extra intro filter
+        bg_stage = f"{base_bg_chain}[bg]"
+
+    print(
+        f"[Video Choreography] Intro='{intro_preset}' | "
+        f"Camera='{cam_preset}' | Card Unveil='{unveil_preset}'"
+    )
+
+    v_filter = (
+        f"{bg_stage};"
         f"[1:v]format=rgba,fade=t=in:st={card_start_t}:d={card_fade_d}:alpha=1[card];"
         f"[2:v]format=rgba,fade=t=in:st={reveal_t}:d={txt_fade_d}:alpha=1[txt];"
         f"[bg][card]overlay=x=0:y='{card_y_expr}':shortest=1[bg_card];"
@@ -388,6 +436,7 @@ def render_local_video(
             "status": "success",
             "overlay_title": meta_block.get("overlay_title", ""),
             "overlay_subtitle": meta_block.get("overlay_subtitle", ""),
+            "intro_effect": intro_preset,
             "camera_preset": cam_preset,
             "unveil_preset": unveil_preset,
             "bgm_track": bgm_url.split("/")[-1]
