@@ -5,14 +5,10 @@ from PIL import Image
 import config
 
 # Cross-platform ZeroGPU compatibility wrapper (works on HF, Kaggle, Azure, Docker, or local GPU)
-IS_ZEROGPU = False
+IS_ZEROGPU = os.environ.get("SPACES_ZERO_GPU", "").lower() in ("true", "1")
 try:
     import spaces
     gpu_decorator = spaces.GPU(duration=65)
-    IS_ZEROGPU = (
-        os.environ.get("SPACES_ZERO_GPU", "").lower() in ("true", "1")
-        or hasattr(spaces, "GPU")
-    )
 except (ImportError, AttributeError):
     def gpu_decorator(fn):
         return fn
