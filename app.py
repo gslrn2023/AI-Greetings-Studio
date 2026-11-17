@@ -344,5 +344,7 @@ with gr.Blocks(title="AI Greetings AV Studio", theme=gr.themes.Soft()) as demo:
 
 if __name__ == "__main__":
     server_port = int(os.environ.get("PORT", os.environ.get("GRADIO_SERVER_PORT", 7860)))
-    share_flag = os.environ.get("GRADIO_SHARE", "false").strip().lower() in ("true", "1", "yes")
+    # Automatically False on HF Spaces (where SPACE_ID exists), True on Kaggle/Colab unless overridden
+    default_share = "false" if os.environ.get("SPACE_ID") else "true"
+    share_flag = os.environ.get("GRADIO_SHARE", default_share).strip().lower() in ("true", "1", "yes")
     demo.launch(server_name="0.0.0.0", server_port=server_port, share=share_flag)
