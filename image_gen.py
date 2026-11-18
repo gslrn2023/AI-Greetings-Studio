@@ -1,10 +1,14 @@
 import os
 import gc
+
+# Prevent CUDA memory fragmentation on constrained GPUs (must be set before importing torch)
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+
 import torch
 from PIL import Image
 import config
 
-# Cross-platform ZeroGPU compatibility wrapper (works on HF, Kaggle, Azure, Docker, or local GPU)
+# Cross-platform ZeroGPU compatibility wrapper (strictly checks HF ZeroGPU environment variable)
 IS_ZEROGPU = os.environ.get("SPACES_ZERO_GPU", "").lower() in ("true", "1")
 try:
     import spaces
@@ -15,9 +19,10 @@ except (ImportError, AttributeError):
 
 pipe = None
 
+
 def _is_low_vram_cuda() -> bool:
     """
-    Returns True if running on a real CUDA GPU (like Kaggle T4 14.56 GiB)
+    Returns True if running on a CUDA GPU (like Kaggle/Azure T4 14.56 GiB or local GPU)
     that is NOT managed by HF ZeroGPU and has less than 22 GiB total VRAM.
     """
     if IS_ZEROGPU or not torch.cuda.is_available():
@@ -28,24 +33,52 @@ def _is_low_vram_cuda() -> bool:
     except Exception:
         return False
 
+
+def _enable_memory_efficient_vae(pipeline):
+    """
+    Enables VAE slicing and tiling both at the pipeline level and directly on pipeline.vae
+    so 1088x1920 latents decode in small tiles instead of allocating a 7.44 GiB tensor.
+    """
+    if hasattr(pipeline, "enable_vae_slicing"):
+        try:
+            pipeline.enable_vae_slicing()
+        except Exception:
+            pass
+    if hasattr(pipeline, "enable_vae_tiling"):
+        try:
+            pipeline.enable_vae_tiling()
+        except Exception:
+            pass
+    if hasattr(pipeline, "vae") and pipeline.vae is not None:
+        if hasattr(pipeline.vae, "enable_slicing"):
+            try:
+                pipeline.vae.enable_slicing()
+            except Exception:
+                pass
+        if hasattr(pipeline.vae, "enable_tiling"):
+            try:
+                pipeline.vae.enable_tiling()
+            except Exception:
+                pass
+
+
 def _apply_device_placement(pipeline, device: str, low_vram: bool):
     """
     Applies full-speed pipe.to(device) on HF ZeroGPU / high-VRAM GPUs,
-    or model CPU offload + VAE tiling on constrained GPUs (e.g., Kaggle T4).
+    or sequential/model CPU offload + explicit VAE tiling on <22 GiB GPUs.
     """
     if device == "cuda" and low_vram:
-        print("Low-VRAM GPU detected (<22 GiB): enabling model CPU offload & VAE slicing...")
-        if hasattr(pipeline, "enable_vae_slicing"):
-            pipeline.enable_vae_slicing()
-        if hasattr(pipeline, "enable_vae_tiling"):
-            pipeline.enable_vae_tiling()
+        print("Low-VRAM GPU detected (<22 GiB): enabling memory-efficient VAE & CPU offload...")
+        _enable_memory_efficient_vae(pipeline)
         try:
-            pipeline.enable_model_cpu_offload()
-        except Exception as e:
-            print(f"Model offload fallback ({e}), using sequential CPU offload...")
             pipeline.enable_sequential_cpu_offload()
+            print("Enabled sequential (layer-by-layer) CPU offload.")
+        except Exception as e:
+            print(f"Sequential offload unavailable ({e}), using model CPU offload...")
+            pipeline.enable_model_cpu_offload()
     else:
         pipeline.to(device)
+
 
 def _init_pipeline():
     global pipe
@@ -56,10 +89,10 @@ def _init_pipeline():
     low_vram = _is_low_vram_cuda()
 
     if low_vram:
-        torch.cuda.empty_cache()
         gc.collect()
+        torch.cuda.empty_cache()
 
-    # Use float16 on older architectures (like Kaggle T4 sm_75) if bf16 isn't native, else bfloat16
+    # Use float16 on older architectures (like T4 sm_75) if bf16 isn't native, else bfloat16
     if device == "cuda":
         dtype = (
             torch.bfloat16
@@ -92,27 +125,34 @@ def _init_pipeline():
         _apply_device_placement(pipe, device, low_vram)
         print("FLUX.1-schnell loaded successfully!")
 
+
 # Initialize the selected engine at boot (required for HF ZeroGPU snapshot pre-warming)
 _init_pipeline()
+
 
 @gpu_decorator
 def generate_artwork(prompt: str) -> Image.Image:
     """Generates a native 1088x1920 9:16 vertical artwork using the active engine."""
     print(f"[{config.IMAGE_ENGINE}] Generating 9:16 artwork: {prompt}")
-    if config.IMAGE_ENGINE == "Z_IMAGE":
-        image = pipe(
-            prompt=prompt,
-            width=config.IMAGE_WIDTH,
-            height=config.IMAGE_HEIGHT,
-            num_inference_steps=config.Z_IMAGE_STEPS,
-            guidance_scale=0.0
-        ).images[0]
-    else:
-        image = pipe(
-            prompt=prompt,
-            width=config.IMAGE_WIDTH,
-            height=config.IMAGE_HEIGHT,
-            num_inference_steps=config.FLUX_STEPS,
-            guidance_scale=0.0
-        ).images[0]
-    return image
+    low_vram = _is_low_vram_cuda()
+
+    if low_vram:
+        gc.collect()
+        torch.cuda.empty_cache()
+
+    steps = config.Z_IMAGE_STEPS if config.IMAGE_ENGINE == "Z_IMAGE" else config.FLUX_STEPS
+
+    try:
+        with torch.inference_mode():
+            image = pipe(
+                prompt=prompt,
+                width=config.IMAGE_WIDTH,
+                height=config.IMAGE_HEIGHT,
+                num_inference_steps=steps,
+                guidance_scale=0.0
+            ).images[0]
+        return image
+    finally:
+        if low_vram:
+            gc.collect()
+            torch.cuda.empty_cache()
