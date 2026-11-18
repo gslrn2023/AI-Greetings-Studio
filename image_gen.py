@@ -1,8 +1,9 @@
 import os
 import gc
 
-# Prevent CUDA memory fragmentation on constrained GPUs (must be set before importing torch)
+# Prevent CUDA memory fragmentation on constrained GPUs
 os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+os.environ.setdefault("PYTORCH_ALLOC_CONF", "expandable_segments:True")
 
 import torch
 from PIL import Image
@@ -36,8 +37,8 @@ def _is_low_vram_cuda() -> bool:
 
 def _enable_memory_efficient_vae(pipeline):
     """
-    Enables VAE slicing and tiling both at the pipeline level and directly on pipeline.vae
-    so 1088x1920 latents decode in small tiles instead of allocating a 7.44 GiB tensor.
+    Prevents 32-bit VAE upcast (cutting 7.44 GiB spike in half) and forces 512px VAE tiling
+    so 1088x1920 latents decode in small tiles on 14.56 GiB GPUs.
     """
     if hasattr(pipeline, "enable_vae_slicing"):
         try:
@@ -49,17 +50,30 @@ def _enable_memory_efficient_vae(pipeline):
             pipeline.enable_vae_tiling()
         except Exception:
             pass
+
     if hasattr(pipeline, "vae") and pipeline.vae is not None:
+        if hasattr(pipeline.vae, "config") and hasattr(pipeline.vae.config, "force_upcast"):
+            pipeline.vae.config.force_upcast = False
+
         if hasattr(pipeline.vae, "enable_slicing"):
             try:
                 pipeline.vae.enable_slicing()
             except Exception:
                 pass
+
         if hasattr(pipeline.vae, "enable_tiling"):
             try:
-                pipeline.vae.enable_tiling()
-            except Exception:
-                pass
+                pipeline.vae.enable_tiling(
+                    tile_sample_min_height=512,
+                    tile_sample_min_width=512,
+                    tile_latent_min_height=64,
+                    tile_latent_min_width=64,
+                )
+            except TypeError:
+                try:
+                    pipeline.vae.enable_tiling()
+                except Exception:
+                    pass
 
 
 def _apply_device_placement(pipeline, device: str, low_vram: bool):
@@ -92,7 +106,7 @@ def _init_pipeline():
         gc.collect()
         torch.cuda.empty_cache()
 
-    # Use float16 on older architectures (like T4 sm_75) if bf16 isn't native, else bfloat16
+    # Prefer bfloat16 on modern CUDA or T4 when supported to prevent float16 overflow in VAE
     if device == "cuda":
         dtype = (
             torch.bfloat16
@@ -130,6 +144,42 @@ def _init_pipeline():
 _init_pipeline()
 
 
+def _decode_latents_safely(latents: torch.Tensor) -> Image.Image:
+    """
+    Flushes transformer allocations from VRAM after the diffusion loop finishes,
+    then decodes the 1088x1920 latents with VAE tiling (or CPU fallback if VRAM is tight).
+    """
+    gc.collect()
+    torch.cuda.empty_cache()
+
+    shift_factor = getattr(pipe.vae.config, "shift_factor", 0.0) or 0.0
+    scaling_factor = getattr(pipe.vae.config, "scaling_factor", 1.0) or 1.0
+
+    # If the pipeline permits unpacking latents (e.g., Flux), unpack first
+    if hasattr(pipe, "_unpack_latents") and latents.ndim == 3:
+        latents = pipe._unpack_latents(
+            latents,
+            config.IMAGE_HEIGHT,
+            config.IMAGE_WIDTH,
+            pipe.vae_scale_factor,
+        )
+
+    latents = (latents / scaling_factor) + shift_factor
+
+    try:
+        vae_dtype = next(pipe.vae.parameters()).dtype
+        latents_in = latents.to(dtype=vae_dtype)
+        image_tensor = pipe.vae.decode(latents_in, return_dict=False)[0]
+    except torch.OutOfMemoryError:
+        print("VRAM tight during VAE decode; falling back to CPU VAE decode...")
+        gc.collect()
+        torch.cuda.empty_cache()
+        pipe.vae.to("cpu", dtype=torch.float32)
+        image_tensor = pipe.vae.decode(latents.to("cpu", dtype=torch.float32), return_dict=False)[0]
+
+    return pipe.image_processor.postprocess(image_tensor, output_type="pil")[0]
+
+
 @gpu_decorator
 def generate_artwork(prompt: str) -> Image.Image:
     """Generates a native 1088x1920 9:16 vertical artwork using the active engine."""
@@ -144,14 +194,27 @@ def generate_artwork(prompt: str) -> Image.Image:
 
     try:
         with torch.inference_mode():
-            image = pipe(
+            if not low_vram:
+                # Standard fast path for HF ZeroGPU / high-VRAM GPUs
+                return pipe(
+                    prompt=prompt,
+                    width=config.IMAGE_WIDTH,
+                    height=config.IMAGE_HEIGHT,
+                    num_inference_steps=steps,
+                    guidance_scale=0.0,
+                ).images[0]
+
+            # Low-VRAM path: generate raw latents first, flush 8.22 GiB transformer cache, then decode VAE
+            latents = pipe(
                 prompt=prompt,
                 width=config.IMAGE_WIDTH,
                 height=config.IMAGE_HEIGHT,
                 num_inference_steps=steps,
-                guidance_scale=0.0
-            ).images[0]
-        return image
+                guidance_scale=0.0,
+                output_type="latent",
+            ).images
+
+            return _decode_latents_safely(latents)
     finally:
         if low_vram:
             gc.collect()
