@@ -22,8 +22,9 @@ except (ImportError, AttributeError):
 
 def _detect_hardware_profile() -> dict:
     """
-    Vendor-agnostic hardware profiler. Inspects GPU count, single-card VRAM, and combined VRAM
-    to classify the system into HIGH_VRAM, MULTI_GPU, SINGLE_LOW_VRAM, or CPU.
+    Vendor-agnostic hardware profiler. Inspects GPU count, single-card VRAM, combined VRAM,
+    and CUDA Compute Capability to classify the system into HIGH_VRAM, MULTI_GPU,
+    SINGLE_LOW_VRAM, or CPU.
     """
     if IS_ZEROGPU:
         return {
@@ -31,7 +32,8 @@ def _detect_hardware_profile() -> dict:
             "gpu_count": 1,
             "single_vram_gb": 40.0,
             "combined_vram_gb": 40.0,
-            "needs_sdpa_chunking": False,
+            "compute_cap": (9, 0),
+            "needs_fp16_tc_dispatch": False,
         }
 
     if not torch.cuda.is_available():
@@ -40,7 +42,8 @@ def _detect_hardware_profile() -> dict:
             "gpu_count": 0,
             "single_vram_gb": 0.0,
             "combined_vram_gb": 0.0,
-            "needs_sdpa_chunking": False,
+            "compute_cap": (0, 0),
+            "needs_fp16_tc_dispatch": False,
         }
 
     try:
@@ -51,10 +54,12 @@ def _detect_hardware_profile() -> dict:
         ]
         max_single_vram = max(vram_list) if vram_list else 0.0
         combined_vram = sum(vram_list)
+        compute_cap = torch.cuda.get_device_capability(0)
     except Exception:
         gpu_count = 1
         max_single_vram = 14.5
         combined_vram = 14.5
+        compute_cap = (7, 5)
 
     if max_single_vram >= 22.0:
         tier = "HIGH_VRAM"
@@ -63,64 +68,120 @@ def _detect_hardware_profile() -> dict:
     else:
         tier = "SINGLE_LOW_VRAM"
 
+    # Pre-Ampere GPUs (sm_70 / sm_75, e.g., Tesla T4 / V100 / RTX 20-series) lack native
+    # bfloat16 Tensor Cores and Cutlass bfloat16 SDPA; dispatch matmuls & SDPA via FP16 Tensor Cores.
+    needs_fp16_tc_dispatch = compute_cap[0] < 8
+
     return {
         "tier": tier,
         "gpu_count": gpu_count,
         "single_vram_gb": round(max_single_vram, 2),
         "combined_vram_gb": round(combined_vram, 2),
-        "needs_sdpa_chunking": max_single_vram < 22.0,
+        "compute_cap": compute_cap,
+        "needs_fp16_tc_dispatch": needs_fp16_tc_dispatch,
     }
 
 
 HW_PROFILE = _detect_hardware_profile()
 print(
     f"[Hardware Profile] Tier={HW_PROFILE['tier']} | GPUs={HW_PROFILE['gpu_count']} | "
-    f"Single_VRAM={HW_PROFILE['single_vram_gb']} GiB | Combined_VRAM={HW_PROFILE['combined_vram_gb']} GiB"
+    f"Single_VRAM={HW_PROFILE['single_vram_gb']} GiB | Combined_VRAM={HW_PROFILE['combined_vram_gb']} GiB | "
+    f"ComputeCap={HW_PROFILE['compute_cap'][0]}.{HW_PROFILE['compute_cap'][1]} | "
+    f"FP16_TC_Dispatch={HW_PROFILE['needs_fp16_tc_dispatch']}"
 )
 
-# 3. Head-Chunked SDPA Wrapper (Installed before importing diffusers)
-# On GPUs with <22 GiB per card (e.g., 14.56 GiB T4), 30-head 1088x1920 attention in float32 fallback
-# requests 7.44 GiB x 2 = 14.88 GiB at once. Chunking 4 heads at a time caps attention VRAM at ~0.99 GiB
-# while keeping the full 12.3 GiB Transformer resident in GPU VRAM.
+if torch.cuda.is_available():
+    try:
+        torch.backends.cuda.enable_mem_efficient_sdp(True)
+    except Exception:
+        pass
+
+# 3. Pre-Ampere (sm_75) FP16 Tensor-Core Dispatch Hooks (Installed before importing diffusers)
+# Preserves bfloat16 residual streams (preventing NaN/black-image overflow) while executing
+# attention and linear GEMMs on hardware FP16 Tensor Cores and fused Cutlass SDPA.
 _orig_sdpa = F.scaled_dot_product_attention
+_orig_linear = F.linear
+
+
+def _chunked_sdpa(query, key, value, attn_mask=None, dropout_p=0.0, is_causal=False, chunk_size=4, **kwargs):
+    num_heads = query.shape[1]
+    outputs = []
+    for i in range(0, num_heads, chunk_size):
+        q_c = query[:, i : i + chunk_size]
+        k_c = key[:, i : i + chunk_size]
+        v_c = value[:, i : i + chunk_size]
+        if attn_mask is not None and attn_mask.ndim == 4 and attn_mask.shape[1] == num_heads:
+            m_c = attn_mask[:, i : i + chunk_size]
+        else:
+            m_c = attn_mask
+        outputs.append(
+            _orig_sdpa(
+                q_c,
+                k_c,
+                v_c,
+                attn_mask=m_c,
+                dropout_p=dropout_p,
+                is_causal=is_causal,
+                **kwargs,
+            )
+        )
+    return torch.cat(outputs, dim=1)
 
 
 def _memory_safe_sdpa(query, key, value, attn_mask=None, dropout_p=0.0, is_causal=False, **kwargs):
+    # Path A: Pre-Ampere GPU (e.g., Tesla T4 sm_75) -> Cast to FP16 for fused Cutlass Memory-Efficient Attention
     if (
-        HW_PROFILE["needs_sdpa_chunking"]
+        HW_PROFILE["needs_fp16_tc_dispatch"]
         and query.is_cuda
-        and query.ndim == 4
-        and query.shape[2] > 1024
-        and query.shape[1] == key.shape[1] == value.shape[1]
+        and query.dtype == torch.bfloat16
     ):
-        num_heads = query.shape[1]
-        chunk_size = 4
-        outputs = []
-        for i in range(0, num_heads, chunk_size):
-            q_c = query[:, i : i + chunk_size]
-            k_c = key[:, i : i + chunk_size]
-            v_c = value[:, i : i + chunk_size]
-            if attn_mask is not None and attn_mask.ndim == 4 and attn_mask.shape[1] == num_heads:
-                m_c = attn_mask[:, i : i + chunk_size]
-            else:
-                m_c = attn_mask
-            outputs.append(
-                _orig_sdpa(
-                    q_c,
-                    k_c,
-                    v_c,
-                    attn_mask=m_c,
-                    dropout_p=dropout_p,
-                    is_causal=is_causal,
-                    **kwargs,
-                )
-            )
-        return torch.cat(outputs, dim=1)
-    return _orig_sdpa(query, key, value, attn_mask=attn_mask, dropout_p=dropout_p, is_causal=is_causal, **kwargs)
+        q16 = query.to(torch.float16)
+        k16 = key.to(torch.float16)
+        v16 = value.to(torch.float16)
+        m16 = attn_mask.to(torch.float16) if (attn_mask is not None and attn_mask.is_floating_point()) else attn_mask
+        try:
+            out16 = _orig_sdpa(q16, k16, v16, attn_mask=m16, dropout_p=dropout_p, is_causal=is_causal, **kwargs)
+            return out16.to(torch.bfloat16)
+        except torch.OutOfMemoryError:
+            torch.cuda.empty_cache()
+            out16 = _chunked_sdpa(q16, k16, v16, attn_mask=m16, dropout_p=dropout_p, is_causal=is_causal, **kwargs)
+            return out16.to(torch.bfloat16)
+
+    # Path B: Ampere+ / HF ZeroGPU / CPU -> Direct native SDPA (with OOM-safe chunked fallback)
+    try:
+        return _orig_sdpa(query, key, value, attn_mask=attn_mask, dropout_p=dropout_p, is_causal=is_causal, **kwargs)
+    except torch.OutOfMemoryError:
+        if query.is_cuda and query.ndim == 4 and query.shape[1] == key.shape[1] == value.shape[1]:
+            torch.cuda.empty_cache()
+            return _chunked_sdpa(query, key, value, attn_mask=attn_mask, dropout_p=dropout_p, is_causal=is_causal, **kwargs)
+        raise
+
+
+def _memory_safe_linear(input, weight, bias=None):
+    # On pre-Ampere GPUs (sm_75), dynamically scale bfloat16 inputs into FP16 safe range (<=256.0),
+    # execute on 65 TFLOPS FP16 Tensor Cores, and rescale back to bfloat16 (zero CPU-GPU sync).
+    if (
+        HW_PROFILE["needs_fp16_tc_dispatch"]
+        and input.is_cuda
+        and input.dtype == torch.bfloat16
+        and weight.dtype == torch.bfloat16
+        and input.numel() > 0
+    ):
+        amax = input.abs().amax()
+        scale = torch.clamp(amax * (1.0 / 256.0), min=1.0)
+        x_fp16 = (input / scale).to(torch.float16)
+        w_fp16 = weight.to(torch.float16)
+        out = _orig_linear(x_fp16, w_fp16, None).to(torch.bfloat16) * scale
+        if bias is not None:
+            out = out + bias
+        return out
+    return _orig_linear(input, weight, bias)
 
 
 torch.nn.functional.scaled_dot_product_attention = _memory_safe_sdpa
 F.scaled_dot_product_attention = _memory_safe_sdpa
+torch.nn.functional.linear = _memory_safe_linear
+F.linear = _memory_safe_linear
 
 # 4. Primary & Fallback Engine Selection
 PRIMARY_ENGINE = config.IMAGE_ENGINE if config.IMAGE_ENGINE in ("FLUX", "Z_IMAGE") else "FLUX"
@@ -234,7 +295,6 @@ def _load_single_engine(engine_name: str):
         "token": config.HF_TOKEN or None,
     }
 
-    # Tier 2 (Multi-GPU): Shard components directly across cuda:0 and cuda:1 during loading
     if tier == "MULTI_GPU":
         load_kwargs["device_map"] = "balanced"
         load_kwargs["low_cpu_mem_usage"] = True
@@ -248,7 +308,6 @@ def _load_single_engine(engine_name: str):
         from diffusers import FluxPipeline
         loaded_pipe = FluxPipeline.from_pretrained(model_id, **load_kwargs)
 
-    # Apply device placement by Tier
     if tier == "HIGH_VRAM":
         loaded_pipe.to("cuda")
     elif tier == "MULTI_GPU":
@@ -256,8 +315,6 @@ def _load_single_engine(engine_name: str):
         _balance_multi_gpu_vae(loaded_pipe)
     elif tier == "SINGLE_LOW_VRAM":
         _enable_memory_efficient_vae(loaded_pipe)
-        # Use fast component-level offload on >=14 GiB GPUs (e.g., 1x T4 14.56 GiB or 16 GB RTX);
-        # only use layer-by-layer sequential offload on <14 GiB cards (8 GB / 12 GB laptops)
         if HW_PROFILE["single_vram_gb"] >= 14.0:
             print("Single GPU (14-22 GiB): enabling fast component-level model CPU offload...")
             loaded_pipe.enable_model_cpu_offload()
