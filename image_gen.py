@@ -1,5 +1,6 @@
 import os
 import gc
+import threading
 
 # 1. Prevent CUDA memory fragmentation on constrained GPUs (must be set before importing torch)
 os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
@@ -69,7 +70,7 @@ def _detect_hardware_profile() -> dict:
         tier = "SINGLE_LOW_VRAM"
 
     # Pre-Ampere GPUs (sm_70 / sm_75, e.g., Tesla T4 / V100 / RTX 20-series) lack native
-    # bfloat16 Tensor Cores and Cutlass bfloat16 SDPA; dispatch matmuls & SDPA via FP16 Tensor Cores.
+    # bfloat16 Tensor Cores and Cutlass bfloat16 SDPA; dispatch transformer matmuls & SDPA via FP16.
     needs_fp16_tc_dispatch = compute_cap[0] < 8
 
     return {
@@ -96,11 +97,15 @@ if torch.cuda.is_available():
     except Exception:
         pass
 
-# 3. Pre-Ampere (sm_75) FP16 Tensor-Core Dispatch Hooks (Installed before importing diffusers)
-# Preserves bfloat16 residual streams (preventing NaN/black-image overflow) while executing
-# attention and linear GEMMs on hardware FP16 Tensor Cores and fused Cutlass SDPA.
+# 3. Pre-Ampere (sm_75) Overflow-Proof FP16 Tensor-Core Dispatch Hooks
+# Scoped strictly to pipeline.transformer via _FP16_SCOPE so text_encoder and VAE remain in pure bfloat16.
+_FP16_SCOPE = threading.local()
 _orig_sdpa = F.scaled_dot_product_attention
 _orig_linear = F.linear
+
+
+def _is_in_transformer_scope() -> bool:
+    return getattr(_FP16_SCOPE, "active", False)
 
 
 def _chunked_sdpa(query, key, value, attn_mask=None, dropout_p=0.0, is_causal=False, chunk_size=4, **kwargs):
@@ -129,25 +134,31 @@ def _chunked_sdpa(query, key, value, attn_mask=None, dropout_p=0.0, is_causal=Fa
 
 
 def _memory_safe_sdpa(query, key, value, attn_mask=None, dropout_p=0.0, is_causal=False, **kwargs):
-    # Path A: Pre-Ampere GPU (e.g., Tesla T4 sm_75) -> Cast to FP16 for fused Cutlass Memory-Efficient Attention
+    # Path A: Pre-Ampere GPU (sm_75) inside Transformer -> Value-scaled FP16 Cutlass Memory-Efficient Attention
     if (
         HW_PROFILE["needs_fp16_tc_dispatch"]
+        and _is_in_transformer_scope()
         and query.is_cuda
         and query.dtype == torch.bfloat16
     ):
-        q16 = query.to(torch.float16)
-        k16 = key.to(torch.float16)
-        v16 = value.to(torch.float16)
-        m16 = attn_mask.to(torch.float16) if (attn_mask is not None and attn_mask.is_floating_point()) else attn_mask
+        q16 = torch.clamp(query, -65000.0, 65000.0).to(torch.float16)
+        k16 = torch.clamp(key, -65000.0, 65000.0).to(torch.float16)
+        v_scale = torch.clamp(value.abs().amax(), min=1.0)
+        v16 = (value / v_scale).to(torch.float16)
+        m16 = (
+            torch.clamp(attn_mask, -65000.0, 65000.0).to(torch.float16)
+            if (attn_mask is not None and attn_mask.is_floating_point())
+            else attn_mask
+        )
         try:
             out16 = _orig_sdpa(q16, k16, v16, attn_mask=m16, dropout_p=dropout_p, is_causal=is_causal, **kwargs)
-            return out16.to(torch.bfloat16)
+            return out16.to(torch.bfloat16) * v_scale
         except torch.OutOfMemoryError:
             torch.cuda.empty_cache()
             out16 = _chunked_sdpa(q16, k16, v16, attn_mask=m16, dropout_p=dropout_p, is_causal=is_causal, **kwargs)
-            return out16.to(torch.bfloat16)
+            return out16.to(torch.bfloat16) * v_scale
 
-    # Path B: Ampere+ / HF ZeroGPU / CPU -> Direct native SDPA (with OOM-safe chunked fallback)
+    # Path B: Ampere+ / HF ZeroGPU / Text Encoder / VAE / CPU -> Direct native SDPA (with OOM-safe chunked fallback)
     try:
         return _orig_sdpa(query, key, value, attn_mask=attn_mask, dropout_p=dropout_p, is_causal=is_causal, **kwargs)
     except torch.OutOfMemoryError:
@@ -158,20 +169,21 @@ def _memory_safe_sdpa(query, key, value, attn_mask=None, dropout_p=0.0, is_causa
 
 
 def _memory_safe_linear(input, weight, bias=None):
-    # On pre-Ampere GPUs (sm_75), dynamically scale bfloat16 inputs into FP16 safe range (<=256.0),
-    # execute on 65 TFLOPS FP16 Tensor Cores, and rescale back to bfloat16 (zero CPU-GPU sync).
+    # On pre-Ampere GPUs (sm_75) inside Transformer, bound both x and w strictly within [-1.0, 1.0]
+    # so FP16 Tensor-Core dot products can never exceed 65,504 even across 10,240-channel FFN layers.
     if (
         HW_PROFILE["needs_fp16_tc_dispatch"]
+        and _is_in_transformer_scope()
         and input.is_cuda
         and input.dtype == torch.bfloat16
         and weight.dtype == torch.bfloat16
         and input.numel() > 0
     ):
-        amax = input.abs().amax()
-        scale = torch.clamp(amax * (1.0 / 256.0), min=1.0)
-        x_fp16 = (input / scale).to(torch.float16)
-        w_fp16 = weight.to(torch.float16)
-        out = _orig_linear(x_fp16, w_fp16, None).to(torch.bfloat16) * scale
+        x_scale = torch.clamp(input.abs().amax(), min=1.0)
+        w_scale = torch.clamp(weight.abs().amax(), min=1.0)
+        x_fp16 = (input / x_scale).to(torch.float16)
+        w_fp16 = (weight / w_scale).to(torch.float16)
+        out = _orig_linear(x_fp16, w_fp16, None).to(torch.bfloat16) * (x_scale * w_scale)
         if bias is not None:
             out = out + bias
         return out
@@ -182,6 +194,34 @@ torch.nn.functional.scaled_dot_product_attention = _memory_safe_sdpa
 F.scaled_dot_product_attention = _memory_safe_sdpa
 torch.nn.functional.linear = _memory_safe_linear
 F.linear = _memory_safe_linear
+
+
+def _attach_transformer_fp16_scope(pipeline):
+    """
+    Wraps pipeline.transformer.forward so FP16 Tensor-Core dispatch only activates during
+    diffusion transformer steps, keeping text_encoder and VAE in pure bfloat16.
+    """
+    if not HW_PROFILE["needs_fp16_tc_dispatch"]:
+        return
+    if not hasattr(pipeline, "transformer") or pipeline.transformer is None:
+        return
+    transformer = pipeline.transformer
+    if getattr(transformer, "_fp16_tc_scoped", False):
+        return
+
+    orig_forward = transformer.forward
+
+    def _scoped_forward(*args, **kwargs):
+        prev = getattr(_FP16_SCOPE, "active", False)
+        _FP16_SCOPE.active = True
+        try:
+            return orig_forward(*args, **kwargs)
+        finally:
+            _FP16_SCOPE.active = prev
+
+    transformer.forward = _scoped_forward
+    transformer._fp16_tc_scoped = True
+
 
 # 4. Primary & Fallback Engine Selection
 PRIMARY_ENGINE = config.IMAGE_ENGINE if config.IMAGE_ENGINE in ("FLUX", "Z_IMAGE") else "FLUX"
@@ -323,6 +363,9 @@ def _load_single_engine(engine_name: str):
             loaded_pipe.enable_sequential_cpu_offload()
     else:
         loaded_pipe.to("cpu")
+
+    # Scope FP16 Tensor-Core dispatch strictly to transformer after device/offload hooks are attached
+    _attach_transformer_fp16_scope(loaded_pipe)
 
     print(f"{model_id} loaded successfully!")
     return loaded_pipe
